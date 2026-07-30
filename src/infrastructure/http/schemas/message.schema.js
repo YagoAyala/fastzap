@@ -295,3 +295,65 @@ export const sendBulkSchema = {
     },
   },
 };
+
+export const sendButtonsSchema = {
+  tags: ["Mensagens"],
+  summary: "Enviar botões",
+  description:
+    "Envia uma mensagem com opções clicáveis. O Baileys removeu botão da API " +
+    "tipada, mas o protocolo mantém InteractiveMessage/ButtonsMessage/ListMessage — " +
+    "então tenta-se do mais rico ao mais simples e para na primeira estratégia que " +
+    "o servidor aceitar. `poll` (enquete nativa) é o piso garantido e `text` " +
+    "(menu numerado) a rede final. A resposta informa qual estratégia venceu.",
+  ...sessionQuery,
+  body: {
+    type: "object",
+    required: ["phone", "text", "buttons"],
+    properties: {
+      phone: { type: "string", minLength: 8, example: "5511999999999" },
+      text: {
+        type: "string",
+        minLength: 1,
+        description: "Corpo da mensagem / pergunta",
+        example: "Confirma o gasto de R$ 87,50?",
+      },
+      footer: {
+        type: "string",
+        description: "Rodapé (ignorado na estratégia poll)",
+        example: "Focca",
+      },
+      buttons: {
+        type: "array",
+        minItems: 1,
+        maxItems: 10,
+        description:
+          "Opções. `id` volta no webhook quando o usuário escolhe. Estratégias " +
+          "de botão usam no máximo 3 opções; list/poll/text aceitam até 10.",
+        items: {
+          type: "object",
+          required: ["id", "title"],
+          properties: {
+            id: { type: "string", minLength: 1, example: "CONFIRM_YES" },
+            title: { type: "string", minLength: 1, example: "Sim, registrar" },
+            description: {
+              type: "string",
+              description: "Subtítulo (só aparece na estratégia list)",
+            },
+          },
+        },
+      },
+      strategies: {
+        type: "array",
+        description:
+          "Limita/ordena a cascata. Útil pra testar uma estratégia isolada em " +
+          "produção sem mexer no código. Padrão: todas, nessa ordem.",
+        items: {
+          type: "string",
+          enum: ["interactive", "buttons", "list", "poll", "text"],
+        },
+        example: ["interactive", "poll"],
+      },
+    },
+  },
+  response: messageSentResponse,
+};

@@ -1,5 +1,6 @@
 import { SendMessageUseCase } from "../../../application/chat/SendMessageUseCase.js";
 import { SendBulkMessageUseCase } from "../../../application/chat/SendBulkMessageUseCase.js";
+import { SendButtonsUseCase } from "../../../application/chat/SendButtonsUseCase.js";
 import {
   sendTextSchema,
   sendImageSchema,
@@ -11,11 +12,28 @@ import {
   sendContactSchema,
   sendReactionSchema,
   sendBulkSchema,
+  sendButtonsSchema,
 } from "../schemas/message.schema.js";
 
 export async function messageRoutes(app, { sessionManager }) {
   const sendUseCase = new SendMessageUseCase(sessionManager);
   const sendBulkUseCase = new SendBulkMessageUseCase(sessionManager);
+  const sendButtonsUseCase = new SendButtonsUseCase(sessionManager, app.log);
+
+  app.post("/send-buttons", { schema: sendButtonsSchema }, async (req, reply) => {
+    const { phone, text, footer, buttons, strategies } = req.body;
+
+    const result = await sendButtonsUseCase.execute({
+      sessionId: req.query.id,
+      phone,
+      text,
+      footer,
+      buttons,
+      ...(strategies && { strategies }),
+    });
+
+    return reply.send(result);
+  });
 
   app.post("/send-text", { schema: sendTextSchema }, async (req, reply) => {
     const { phone, message } = req.body;

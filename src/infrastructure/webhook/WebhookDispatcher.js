@@ -76,6 +76,22 @@ export class WebhookDispatcher {
   }
 
   async #extractTypePayload(msg, msgContent, sessionId) {
+    // Resposta de opção clicada. Precisa vir ANTES do bloco de texto: o
+    // buttonsResponseMessage também carrega o rótulo em texto, e sem isso a
+    // escolha chegaria como mensagem comum — o chamador perderia o `id` e não
+    // saberia qual opção o usuário tocou.
+    const choice = this.#extractChoice(msgContent);
+    if (choice) {
+      return {
+        type: "buttonsResponse",
+        typePayload: {
+          buttonsResponse: choice,
+          // Espelhado como texto para quem só trata `text` continuar funcionando.
+          text: { message: choice.title ?? choice.id ?? "" },
+        },
+      };
+    }
+
     if (msgContent.conversation || msgContent.extendedTextMessage) {
       const text =
         msgContent.conversation ?? msgContent.extendedTextMessage?.text ?? "";
@@ -222,6 +238,70 @@ export class WebhookDispatcher {
       type: "unknown",
       typePayload: { raw: msgContent },
     };
+  }
+
+  /**
+   * Normaliza o toque numa opção, venha ela de qual estratégia for.
+   *
+   * O SendButtonsUseCase degrada em cascata (interactive → buttons → list →
+   * poll → texto), então a resposta chega em quatro formatos diferentes de
+   * proto. Quem consome o webhook não deveria precisar saber qual venceu — sai
+   * sempre `{ id, title, source }`.
+   *
+   * Não cobre a enquete: voto de poll não vem no messages.upsert, vem em
+   * messages.update com o voto criptografado, e precisa da mensagem original pra
+   * decifrar (getAggregateVotesInPollMessage). Fica como peça separada.
+   */
+  #extractChoice(msgContent) {
+    const buttons = msgContent.buttonsResponseMessage;
+    if (buttons) {
+      return {
+        id: buttons.selectedButtonId ?? null,
+        title: buttons.selectedDisplayText ?? null,
+        source: "buttons",
+      };
+    }
+
+    const template = msgContent.templateButtonReplyMessage;
+    if (template) {
+      return {
+        id: template.selectedId ?? null,
+        title: template.selectedDisplayText ?? null,
+        source: "template",
+      };
+    }
+
+    const list = msgContent.listResponseMessage;
+    if (list) {
+      return {
+        id: list.singleSelectReply?.selectedRowId ?? null,
+        title: list.title ?? null,
+        source: "list",
+      };
+    }
+
+    const interactive = msgContent.interactiveResponseMessage;
+    if (interactive) {
+      // O nativeFlow devolve os dados como JSON dentro de paramsJson.
+      const raw = interactive.nativeFlowResponseMessage?.paramsJson;
+      let parsed = {};
+      try {
+        parsed = raw ? JSON.parse(raw) : {};
+      } catch {
+        parsed = {};
+      }
+
+      return {
+        id: parsed.id ?? parsed.selectedId ?? null,
+        title:
+          parsed.display_text ??
+          interactive.body?.text ??
+          null,
+        source: "interactive",
+      };
+    }
+
+    return null;
   }
 
   async #tryDownloadMedia(message, sessionId) {

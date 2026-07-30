@@ -6,6 +6,7 @@ import makeWASocket, {
   useMultiFileAuthState,
   makeCacheableSignalKeyStore,
   fetchLatestBaileysVersion,
+  generateWAMessageFromContent,
 } from '@whiskeysockets/baileys'
 import { Boom } from '@hapi/boom'
 import pino from 'pino'
@@ -96,6 +97,39 @@ export class BaileysClient extends EventEmitter {
     await new Promise((resolve) => setTimeout(resolve, delay))
 
     return this.#socket.sendMessage(jid, content)
+  }
+
+  /**
+   * Envia um proto.IMessage arbitrário.
+   *
+   * A API tipada do Baileys (AnyRegularMessageContent) não expõe botão: só
+   * text/mídia/poll/location/contacts/react/etc. Mas o protocolo continua
+   * carregando ButtonsMessage (campo 42), InteractiveMessage (45) e ListMessage
+   * (36) — o que sumiu foi o atalho, não a capacidade. Montando o proto na mão e
+   * relayando dá pra enviar os três.
+   *
+   * Aviso honesto: o servidor da Meta pode recusar/filtrar interativos de conta
+   * que não é Business API verificada, e a renderização varia por versão do app
+   * do destinatário. Por isso quem chama isso é o SendButtonsUseCase, que degrada
+   * em cascata até a enquete (essa sim nativa e garantida).
+   */
+  async sendRawMessage(jid, message) {
+    if (!this.#socket) {
+      throw new Error(`Socket da sessão '${this.#sessionId}' não está disponível`)
+    }
+
+    const delay = Math.floor(Math.random() * 3000) + 1000
+    await new Promise((resolve) => setTimeout(resolve, delay))
+
+    const generated = generateWAMessageFromContent(jid, message, {
+      userJid: this.#socket.user?.id,
+    })
+
+    await this.#socket.relayMessage(jid, generated.message, {
+      messageId: generated.key.id,
+    })
+
+    return generated
   }
 
   async onWhatsApp(...jids) {
