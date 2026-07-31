@@ -20,6 +20,32 @@ export async function messageRoutes(app, { sessionManager }) {
   const sendBulkUseCase = new SendBulkMessageUseCase(sessionManager);
   const sendButtonsUseCase = new SendButtonsUseCase(sessionManager, app.log);
 
+  app.post("/send-presence", async (req, reply) => {
+    const { phone, presence = "composing" } = req.body ?? {};
+    const client = sessionManager.getClient(req.query.id);
+    if (!client) return reply.status(404).send({ error: "sessão não encontrada" });
+
+    const { PhoneFormatter } = await import(
+      "../../whatsapp/PhoneFormatter.js"
+    );
+    const jid = await PhoneFormatter.toCanonicalJid(phone, client);
+    await client.sendPresence(jid, presence);
+    return reply.send({ success: true });
+  });
+
+  app.post("/read-message", async (req, reply) => {
+    const { phone, messageId } = req.body ?? {};
+    const client = sessionManager.getClient(req.query.id);
+    if (!client) return reply.status(404).send({ error: "sessão não encontrada" });
+
+    const { PhoneFormatter } = await import(
+      "../../whatsapp/PhoneFormatter.js"
+    );
+    const jid = await PhoneFormatter.toCanonicalJid(phone, client);
+    await client.readMessages([{ remoteJid: jid, id: messageId, fromMe: false }]);
+    return reply.send({ success: true });
+  });
+
   app.post("/send-buttons", { schema: sendButtonsSchema }, async (req, reply) => {
     const { phone, text, footer, buttons, strategies } = req.body;
 

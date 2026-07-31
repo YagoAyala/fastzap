@@ -43,6 +43,24 @@ export class WebhookDispatcher {
       );
     });
 
+    // Recibos de entrega num envelope PRÓPRIO. Quem consome distingue pelo
+    // `type` e não precisa adivinhar: ReceivedCallback é mensagem de usuário,
+    // MessageStatusCallback é o WhatsApp dizendo o que aconteceu com o que
+    // mandamos. Sem isso, "entregou" e "sumiu" são indistinguíveis.
+    sessionManager.onMessageStatus?.((status, sessionId) => {
+      this.#sendWithRetry({
+        instanceId: sessionId,
+        type: "MessageStatusCallback",
+        phone: stripJidSuffixes(status.jid),
+        messageId: status.messageId,
+        status: status.status,
+        fromMe: status.fromMe,
+        momment: Date.now(),
+      }).catch((err) =>
+        logger.error({ err, sessionId }, "Erro no dispatch de status"),
+      );
+    });
+
     logger.info({ url: this.#webhookUrl }, "WebhookDispatcher ativo");
   }
 
@@ -72,9 +90,18 @@ export class WebhookDispatcher {
       sessionId,
     );
 
+    // Em grupo, `phone` é o JID do GRUPO — quem falou está em key.participant.
+    // Sem isso o consumidor não tem como saber de quem creditar a mensagem, e
+    // trataria o grupo inteiro como se fosse um contato só.
+    const participantPhone = isGroup
+      ? await this.#resolvePhone(key.participant ?? "", sessionId)
+      : phone;
+
     return {
       instanceId: sessionId,
       phone,
+      participantPhone,
+      chatName: msg.pushName ?? null,
       fromMe,
       isGroup,
       type: "ReceivedCallback",

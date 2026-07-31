@@ -28,6 +28,7 @@ export class SessionManager {
   // senão a tela mostra um código morto.
   #qrCodes = new Map();
   #messageListeners = [];
+  #statusListeners = [];
   #disconnectListeners = [];
   #authenticatedListeners = [];
 
@@ -193,6 +194,10 @@ export class SessionManager {
     this.#messageListeners.push(listener);
   }
 
+  onMessageStatus(listener) {
+    this.#statusListeners.push(listener);
+  }
+
   onDisconnect(listener) {
     this.#disconnectListeners.push(listener);
   }
@@ -345,6 +350,12 @@ export class SessionManager {
     client.on("message", (message, sid) => {
       for (const listener of this.#messageListeners) {
         listener(message, sid);
+      }
+    });
+
+    client.on("message-status", (status, sid) => {
+      for (const listener of this.#statusListeners) {
+        listener(status, sid);
       }
     });
   }

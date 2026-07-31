@@ -12,6 +12,16 @@ import { Boom } from '@hapi/boom'
 import pino from 'pino'
 import { env } from '../../config/env.js'
 
+// proto.WebMessageInfo.Status — o número cru não diz nada pra quem consome.
+const STATUS_LABELS = {
+  0: 'error',
+  1: 'pending',
+  2: 'sent',
+  3: 'delivered',
+  4: 'read',
+  5: 'played',
+}
+
 export class BaileysClient extends EventEmitter {
   #socket = null
   #sessionId
@@ -50,6 +60,10 @@ export class BaileysClient extends EventEmitter {
     const logger = pino({ level: 'silent' })
 
     this.#socket = makeWASocket({
+      // Default do Baileys é true: o número ficaria "online" 24 horas por dia,
+      // o que nenhum humano faz — e ainda suprime push notification no aparelho
+      // pareado.
+      markOnlineOnConnect: false,
       version,
       auth: {
         creds: state.creds,
@@ -88,7 +102,7 @@ export class BaileysClient extends EventEmitter {
     }
   }
 
-  async sendMessage(jid, content) {
+  async sendMessage(jid, content, options = {}) {
     if (!this.#socket) {
       throw new Error(`Socket da sessão '${this.#sessionId}' não está disponível`)
     }
@@ -96,7 +110,9 @@ export class BaileysClient extends EventEmitter {
     const delay = Math.floor(Math.random() * 3000) + 1000
     await new Promise((resolve) => setTimeout(resolve, delay))
 
-    return this.#socket.sendMessage(jid, content)
+    // `quoted` é o que faz o WhatsApp renderizar a citação da mensagem original.
+    // O Baileys aceita a mensagem inteira ou um stub com key + message.
+    return this.#socket.sendMessage(jid, content, options.quoted ? { quoted: options.quoted } : undefined)
   }
 
   /**
@@ -130,6 +146,30 @@ export class BaileysClient extends EventEmitter {
     })
 
     return generated
+  }
+
+  /**
+   * Presença ("digitando…", "gravando…").
+   *
+   * É o ÚNICO sinal client-side que a Meta documenta explicitamente como
+   * critério de banimento: "If an account continually sends messages without
+   * triggering the typing indicator, it can be a signal of abuse, and we will
+   * ban the account." Custo baixíssimo, respaldo oficial direto.
+   */
+  async sendPresence(jid, presence = 'composing') {
+    if (!this.#socket) {
+      throw new Error(`Socket da sessão '${this.#sessionId}' não está disponível`)
+    }
+    await this.#socket.presenceSubscribe(jid).catch(() => {})
+    return this.#socket.sendPresenceUpdate(presence, jid)
+  }
+
+  /** Recibo de leitura (tique azul). Humano lê antes de responder. */
+  async readMessages(keys) {
+    if (!this.#socket) {
+      throw new Error(`Socket da sessão '${this.#sessionId}' não está disponível`)
+    }
+    return this.#socket.readMessages(keys)
   }
 
   async onWhatsApp(...jids) {
@@ -231,6 +271,23 @@ export class BaileysClient extends EventEmitter {
       for (const message of messages) {
         if (!message.message) continue
         this.emit('message', message, this.#sessionId)
+      }
+    })
+
+    // Recibos de entrega. Sem isto quem consome o gateway fica CEGO: o único
+    // registro de saída seria "o Baileys aceitou a stanza", que não é o mesmo
+    // que "o usuário recebeu". Sessão despareada, número banido e entrega
+    // normal ficariam indistinguíveis — e qualquer sentinela que conte falhas
+    // de entrega viraria falso-verde.
+    this.#socket.ev.on('messages.update', (updates) => {
+      for (const { key, update } of updates) {
+        if (update?.status === undefined || update?.status === null) continue
+        this.emit('message-status', {
+          messageId: key?.id ?? null,
+          jid: key?.remoteJid ?? null,
+          fromMe: key?.fromMe ?? false,
+          status: STATUS_LABELS[update.status] ?? String(update.status),
+        }, this.#sessionId)
       }
     })
   }
