@@ -22,6 +22,13 @@ const schema = z.object({
     .transform((v) => (v.trim() === "" ? undefined : v))
     .pipe(z.string().url().optional())
     .optional(),
+  // Segredo compartilhado enviado como header x-gateway-secret. O webhook do
+  // gateway não é assinado como o da Meta, então sem isto o destino não tem como
+  // provar que a chamada veio daqui. Opcional pra não quebrar quem já usa.
+  WEBHOOK_HEADER_SECRET: z
+    .string()
+    .transform((v) => (v.trim() === "" ? undefined : v))
+    .optional(),
   WEBHOOK_MAX_RETRIES: z.coerce.number().default(3),
   WEBHOOK_RETRY_DELAY_MS: z.coerce.number().default(1000),
 

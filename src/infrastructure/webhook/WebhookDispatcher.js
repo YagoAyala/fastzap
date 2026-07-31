@@ -368,7 +368,15 @@ export class WebhookDispatcher {
     for (let attempt = 1; attempt <= this.#maxRetries; attempt++) {
       try {
         await axios.post(this.#webhookUrl, payload, {
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            // Sem isto o destino não tem como distinguir o gateway de qualquer
+            // um que descubra a URL: o webhook não é assinado como o da Meta.
+            // Opcional — quem não configurar segue como antes.
+            ...(env.WEBHOOK_HEADER_SECRET && {
+              "x-gateway-secret": env.WEBHOOK_HEADER_SECRET,
+            }),
+          },
           timeout: 10_000,
         });
 
