@@ -22,7 +22,15 @@ export class PhoneFormatter {
    * enviar do que não enviar.
    */
   static async toCanonicalJid(phone, client) {
-    const digits = String(phone).replace(/\D/g, "");
+    // JID de grupo não é telefone: não tem 9º dígito pra resolver e onWhatsApp()
+    // não sabe respondê-lo. Sem esta saída antecipada, qualquer rota que
+    // canonicalize (texto, botões, mídia) transformaria "...@g.us" num número
+    // inválido e a mensagem sumiria — que é como o envio de botão pra grupo
+    // ficaria quebrado sem ninguém ver erro.
+    const raw = String(phone || "");
+    if (raw.endsWith("@g.us")) return raw;
+
+    const digits = raw.replace(/\D/g, "");
     if (!digits) return PhoneFormatter.toJid(phone);
 
     const cached = canonicalJidCache.get(digits);
