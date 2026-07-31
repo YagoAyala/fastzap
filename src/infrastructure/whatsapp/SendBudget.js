@@ -46,11 +46,11 @@ export class SendBudget {
   async load() {
     try {
       const db = getDatabase();
-      const { rows } = await db.query(
-        `SELECT bucket_key, count FROM outbound_counters
-         WHERE session_id = $1 AND updated_at > now() - interval '2 days'`,
-        [this.sessionId]
-      );
+      const rows = await db`
+        SELECT bucket_key, count FROM outbound_counters
+        WHERE session_id = ${this.sessionId}
+          AND updated_at > now() - interval '2 days'
+      `;
       for (const row of rows) {
         this.#cache.set(row.bucket_key, Number(row.count));
       }
@@ -126,14 +126,13 @@ export class SendBudget {
     try {
       const db = getDatabase();
       for (const [key, count] of batch) {
-        await db.query(
-          `INSERT INTO outbound_counters (session_id, bucket_key, count, updated_at)
-           VALUES ($1, $2, $3, now())
-           ON CONFLICT (session_id, bucket_key)
-           DO UPDATE SET count = GREATEST(outbound_counters.count, EXCLUDED.count),
-                         updated_at = now()`,
-          [this.sessionId, key, count]
-        );
+        await db`
+          INSERT INTO outbound_counters (session_id, bucket_key, count, updated_at)
+          VALUES (${this.sessionId}, ${key}, ${count}, now())
+          ON CONFLICT (session_id, bucket_key)
+          DO UPDATE SET count = GREATEST(outbound_counters.count, EXCLUDED.count),
+                        updated_at = now()
+        `;
       }
     } catch (error) {
       logger.warn({ error: error?.message }, "Falha ao persistir orçamento");
