@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import pino from "pino";
 import { BaileysClient } from "./BaileysClient.js";
+import { SessionHealth } from "./SessionHealth.js";
 import { env } from "../../config/env.js";
 import {
   SessionAlreadyExistsError,
@@ -29,6 +30,8 @@ export class SessionManager {
   #qrCodes = new Map();
   #messageListeners = [];
   #statusListeners = [];
+  #health = null;
+  #healthTimer = null;
   #disconnectListeners = [];
   #authenticatedListeners = [];
 
@@ -198,6 +201,28 @@ export class SessionManager {
     this.#statusListeners.push(listener);
   }
 
+  /**
+   * Liga o vigia de silêncio. Roda a cada 5 min: o alerta é sobre AUSÊNCIA de
+   * tráfego, então não existe evento que o dispare — precisa de relógio.
+   */
+  startHealthWatch(notifier) {
+    if (this.#healthTimer) return;
+    this.#health = new SessionHealth({ notifier });
+    this.#healthTimer = setInterval(() => {
+      try {
+        this.#health.check();
+      } catch (err) {
+        logger.warn({ err: err?.message }, "Falha no vigia de saúde");
+      }
+    }, 5 * 60 * 1000);
+    this.#healthTimer.unref?.();
+    logger.info("Vigia de silêncio de entrada ativo (shadowban)");
+  }
+
+  healthSnapshot() {
+    return this.#health?.snapshot() ?? null;
+  }
+
   onDisconnect(listener) {
     this.#disconnectListeners.push(listener);
   }
@@ -348,6 +373,7 @@ export class SessionManager {
     });
 
     client.on("message", (message, sid) => {
+      this.#health?.recordInbound();
       for (const listener of this.#messageListeners) {
         listener(message, sid);
       }

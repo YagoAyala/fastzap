@@ -33,6 +33,11 @@ async function bootstrap() {
 
   const telegram = new TelegramNotifier();
 
+  // Vigia de shadowban: o modo de falha em que a sessão segue autenticada, os
+  // envios seguem "dando sucesso", e nada chega nem volta. É o único que não
+  // aparece em nenhum log de erro — só na ausência de tráfego de entrada.
+  sessionManager.startHealthWatch(telegram);
+
   sessionManager.onDisconnect(async (sessionId, reason) => {
     logger.warn({ sessionId, reason }, "Sessão perdida permanentemente");
 

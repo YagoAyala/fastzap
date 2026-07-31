@@ -32,6 +32,7 @@ export class OutboundQueue {
   #dayKey = "";
 
   constructor({
+    budget = null,
     reactiveMinIntervalMs = 250,
     reactiveJitterMs = 400,
     proactiveMinIntervalMs = 1500,
@@ -45,6 +46,7 @@ export class OutboundQueue {
     this.proactiveJitterMs = proactiveJitterMs;
     this.perRecipientDailyLimit = perRecipientDailyLimit;
     this.maxDepth = maxDepth;
+    this.budget = budget;
   }
 
   /**
@@ -77,6 +79,12 @@ export class OutboundQueue {
    * escrevendo, responder não é assédio.
    */
   #withinRecipientBudget(entry) {
+    // Com orçamento persistido, ele é a autoridade — o contador em memória
+    // zerava a cada restart, que é justamente quando o limite mais importa.
+    if (this.budget) {
+      return this.budget.check({ lane: entry.lane, jid: entry.jid }).allowed;
+    }
+
     if (entry.lane === "reactive" || !entry.jid) return true;
 
     const today = new Date().toISOString().slice(0, 10);
@@ -90,6 +98,7 @@ export class OutboundQueue {
   }
 
   #commitRecipient(entry) {
+    this.budget?.commit({ jid: entry.jid });
     if (entry.lane === "reactive" || !entry.jid) return;
     this.#perRecipientDay.set(
       entry.jid,

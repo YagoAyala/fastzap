@@ -12,6 +12,7 @@ import { Boom } from '@hapi/boom'
 import pino from 'pino'
 import { env } from '../../config/env.js'
 import { OutboundQueue } from './OutboundQueue.js'
+import { SendBudget } from './SendBudget.js'
 
 // proto.WebMessageInfo.Status — o número cru não diz nada pra quem consome.
 const STATUS_LABELS = {
@@ -31,12 +32,16 @@ export class BaileysClient extends EventEmitter {
   #phoneNumber = null
   #pendingSetup = false
   #pairingCodeRequested = false
-  #outbound = new OutboundQueue()
+  #budget
+  #outbound
 
   constructor(sessionId) {
     super()
     this.#sessionId = sessionId
     this.#sessionsDir = path.resolve(env.SESSIONS_DIR)
+    this.#budget = new SendBudget({ sessionId })
+    this.#budget.load().catch(() => {})
+    this.#outbound = new OutboundQueue({ budget: this.#budget })
   }
 
   get sessionId() {
@@ -159,7 +164,7 @@ export class BaileysClient extends EventEmitter {
   }
 
   outboundStats() {
-    return this.#outbound.stats()
+    return { ...this.#outbound.stats(), budget: this.#budget.snapshot() }
   }
 
   /**

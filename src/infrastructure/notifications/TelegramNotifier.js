@@ -40,6 +40,11 @@ export class TelegramNotifier {
     await this.#send(message);
   }
 
+  /** Alerta genérico — usado pelo vigia de saúde da sessão. */
+  async notify(text) {
+    await this.#send(text);
+  }
+
   async #send(text) {
     if (!this.#enabled) return;
 
