@@ -6,11 +6,11 @@ export class SendMessageUseCase {
     this.sessionManager = sessionManager;
   }
 
-  async sendText({ sessionId, phone, message }) {
+  async sendText({ sessionId, phone, message, lane }) {
     const client = this._getClient(sessionId);
     const jid = await PhoneFormatter.toCanonicalJid(phone, client);
 
-    const result = await client.sendMessage(jid, { text: message });
+    const result = await client.sendMessage(jid, { text: message }, { lane });
 
     return this._formatResult(result);
   }

@@ -11,6 +11,7 @@ import makeWASocket, {
 import { Boom } from '@hapi/boom'
 import pino from 'pino'
 import { env } from '../../config/env.js'
+import { OutboundQueue } from './OutboundQueue.js'
 
 // proto.WebMessageInfo.Status — o número cru não diz nada pra quem consome.
 const STATUS_LABELS = {
@@ -30,6 +31,7 @@ export class BaileysClient extends EventEmitter {
   #phoneNumber = null
   #pendingSetup = false
   #pairingCodeRequested = false
+  #outbound = new OutboundQueue()
 
   constructor(sessionId) {
     super()
@@ -107,8 +109,17 @@ export class BaileysClient extends EventEmitter {
       throw new Error(`Socket da sessão '${this.#sessionId}' não está disponível`)
     }
 
-    const delay = Math.floor(Math.random() * 3000) + 1000
-    await new Promise((resolve) => setTimeout(resolve, delay))
+    // O jitter cego de 1-4s que existia aqui saiu: sem estado compartilhado ele
+    // não espaçava nada sob concorrência (N requests dormiam em paralelo) e
+    // ainda somava ~2,5s de latência em TODA resposta a usuário. A fila espaça
+    // de verdade e devolve a latência do reativo.
+    return this.#outbound.enqueue(
+      () => this.#doSend(jid, content, options),
+      { lane: options.lane ?? 'proactive', jid }
+    )
+  }
+
+  async #doSend(jid, content, options = {}) {
 
     // `quoted` é o que faz o WhatsApp renderizar a citação da mensagem original.
     // O Baileys aceita a mensagem inteira ou um stub com key + message.
@@ -134,18 +145,21 @@ export class BaileysClient extends EventEmitter {
       throw new Error(`Socket da sessão '${this.#sessionId}' não está disponível`)
     }
 
-    const delay = Math.floor(Math.random() * 3000) + 1000
-    await new Promise((resolve) => setTimeout(resolve, delay))
+    return this.#outbound.enqueue(async () => {
+      const generated = generateWAMessageFromContent(jid, message, {
+        userJid: this.#socket.user?.id,
+      })
 
-    const generated = generateWAMessageFromContent(jid, message, {
-      userJid: this.#socket.user?.id,
-    })
+      await this.#socket.relayMessage(jid, generated.message, {
+        messageId: generated.key.id,
+      })
 
-    await this.#socket.relayMessage(jid, generated.message, {
-      messageId: generated.key.id,
-    })
+      return generated
+    }, { lane: 'proactive', jid })
+  }
 
-    return generated
+  outboundStats() {
+    return this.#outbound.stats()
   }
 
   /**
