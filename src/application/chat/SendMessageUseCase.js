@@ -8,7 +8,7 @@ export class SendMessageUseCase {
 
   async sendText({ sessionId, phone, message }) {
     const client = this._getClient(sessionId);
-    const jid = PhoneFormatter.toJid(phone);
+    const jid = await PhoneFormatter.toCanonicalJid(phone, client);
 
     const result = await client.sendMessage(jid, { text: message });
 
@@ -17,7 +17,7 @@ export class SendMessageUseCase {
 
   async sendImage({ sessionId, phone, image, caption = "", viewOnce = false }) {
     const client = this._getClient(sessionId);
-    const jid = PhoneFormatter.toJid(phone);
+    const jid = await PhoneFormatter.toCanonicalJid(phone, client);
 
     const content = {
       image: image.startsWith("data:")
@@ -34,7 +34,7 @@ export class SendMessageUseCase {
 
   async sendAudio({ sessionId, phone, audio, ptt = true }) {
     const client = this._getClient(sessionId);
-    const jid = PhoneFormatter.toJid(phone);
+    const jid = await PhoneFormatter.toCanonicalJid(phone, client);
 
     const content = {
       audio: audio.startsWith("data:")
@@ -51,7 +51,7 @@ export class SendMessageUseCase {
 
   async sendVideo({ sessionId, phone, video, caption = "", viewOnce = false }) {
     const client = this._getClient(sessionId);
-    const jid = PhoneFormatter.toJid(phone);
+    const jid = await PhoneFormatter.toCanonicalJid(phone, client);
 
     const content = {
       video: video.startsWith("data:")
@@ -68,7 +68,7 @@ export class SendMessageUseCase {
 
   async sendDocument({ sessionId, phone, document, fileName, caption = "" }) {
     const client = this._getClient(sessionId);
-    const jid = PhoneFormatter.toJid(phone);
+    const jid = await PhoneFormatter.toCanonicalJid(phone, client);
 
     const content = {
       document: document.startsWith("data:")
@@ -94,7 +94,7 @@ export class SendMessageUseCase {
     image,
   }) {
     const client = this._getClient(sessionId);
-    const jid = PhoneFormatter.toJid(phone);
+    const jid = await PhoneFormatter.toCanonicalJid(phone, client);
 
     const content = {
       text: `${message}\n${linkUrl}`,
@@ -116,7 +116,7 @@ export class SendMessageUseCase {
 
   async sendLocation({ sessionId, phone, lat, lng, address }) {
     const client = this._getClient(sessionId);
-    const jid = PhoneFormatter.toJid(phone);
+    const jid = await PhoneFormatter.toCanonicalJid(phone, client);
 
     const result = await client.sendMessage(jid, {
       location: {
@@ -131,7 +131,7 @@ export class SendMessageUseCase {
 
   async sendContact({ sessionId, phone, contactName, contactPhone }) {
     const client = this._getClient(sessionId);
-    const jid = PhoneFormatter.toJid(phone);
+    const jid = await PhoneFormatter.toCanonicalJid(phone, client);
 
     const vcard =
       `BEGIN:VCARD\nVERSION:3.0\nFN:${contactName}\n` +
@@ -150,7 +150,7 @@ export class SendMessageUseCase {
 
   async sendReaction({ sessionId, phone, messageId, reaction }) {
     const client = this._getClient(sessionId);
-    const jid = PhoneFormatter.toJid(phone);
+    const jid = await PhoneFormatter.toCanonicalJid(phone, client);
 
     const result = await client.sendMessage(jid, {
       react: { text: reaction, key: { remoteJid: jid, id: messageId } },

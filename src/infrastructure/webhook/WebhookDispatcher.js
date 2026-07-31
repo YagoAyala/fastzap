@@ -5,6 +5,15 @@ import { MediaDownloader } from "../whatsapp/MediaDownloader.js";
 
 const logger = pino({ level: "info" }).child({ module: "WebhookDispatcher" });
 
+// O JID carrega domínio E, em multi-device, o índice do aparelho:
+// "554792512269:0@s.whatsapp.net". Deixar o ":0" passar é tão quebrado quanto
+// deixar o "@lid": quem indexa usuário por telefone não casa "554792512269:0"
+// com "554792512269". Tira os dois.
+const stripJidSuffixes = (jid) =>
+  String(jid || "")
+    .replace(/@(s\.whatsapp\.net|g\.us|c\.us|lid)$/, "")
+    .replace(/:\d+$/, "");
+
 export class WebhookDispatcher {
   #webhookUrl;
   #maxRetries;
@@ -48,7 +57,7 @@ export class WebhookDispatcher {
     const isGroup = rawJid.endsWith("@g.us");
     const fromMe = key.fromMe ?? false;
 
-    const phone = rawJid.replace(/@(s\.whatsapp\.net|g\.us|c\.us)$/, "");
+    const phone = await this.#resolvePhone(rawJid, sessionId);
 
     const momment =
       typeof msg.messageTimestamp === "object"
@@ -238,6 +247,38 @@ export class WebhookDispatcher {
       type: "unknown",
       typePayload: { raw: msgContent },
     };
+  }
+
+  /**
+   * Devolve o telefone real do remetente.
+   *
+   * O WhatsApp passou a endereçar parte dos contatos por LID (`<id>@lid`) em vez
+   * do telefone. O replace anterior só tirava @s.whatsapp.net/@g.us/@c.us, então
+   * o LID vazava inteiro pro webhook — como visto no teste de 31/07/2026, que
+   * voltou `phone: "244486919729190@lid"`. Pra qualquer consumidor que indexe
+   * usuário por telefone (o caso da Focca), isso transforma cada mensagem num
+   * contato desconhecido.
+   *
+   * O Baileys mantém o mapa: signalRepository.lidMapping.getPNForLID(). Se a
+   * resolução falhar devolvemos o id sem sufixo — melhor um id estável do que
+   * uma string com "@lid" grudado.
+   */
+  async #resolvePhone(rawJid, sessionId) {
+    if (!rawJid.endsWith("@lid")) return stripJidSuffixes(rawJid);
+
+    try {
+      const socket = this.#sessionManager?.getClient(sessionId)?.socket;
+      const pn = await socket?.signalRepository?.lidMapping?.getPNForLID(rawJid);
+
+      if (pn) return stripJidSuffixes(String(pn));
+    } catch (error) {
+      logger.warn(
+        { sessionId, rawJid, error: error?.message },
+        "Falha ao resolver LID para telefone",
+      );
+    }
+
+    return stripJidSuffixes(rawJid);
   }
 
   /**

@@ -116,18 +116,50 @@ export async function sessionRoutes(
       }
 
       const qrCode = sessionManager.getQrCode(sessionId);
+      const connected = sessionManager.isConnected(sessionId);
 
-      const html = buildQrHtml(sessionId, qrCode);
+      // O WhatsApp expira o QR em ~20s e o Baileys derruba o socket se ninguém
+      // escaneia (~60s). Sem isto a página recarregava de 3 em 3 segundos
+      // mostrando eternamente um QR morto, e só voltava a funcionar recriando a
+      // sessão na mão. Sem QR e sem conexão = regenera, para que a próxima
+      // atualização já traga um código válido. Assim dá pra deixar a aba aberta e
+      // escanear na hora que der.
+      if (!qrCode && !connected) {
+        regenerateQr(sessionId, sessionManager, app.log);
+      }
+
+      const html = buildQrHtml(sessionId, qrCode, connected);
 
       return reply.type("text/html").send(html);
     },
   );
 }
 
-function buildQrHtml(sessionId, qrCode) {
-  const content = qrCode
-    ? `<img src="${qrCode}" alt="QR Code" style="max-width:300px"/>`
-    : `<p style="color:#888">Aguardando QR code para a sessão <strong>${sessionId}</strong>...</p>`;
+// O refresh de 3s dispararia uma recriação a cada carga; este guard deixa uma
+// só em voo por sessão.
+const regenerating = new Set();
+
+function regenerateQr(sessionId, sessionManager, log) {
+  if (regenerating.has(sessionId)) return;
+
+  regenerating.add(sessionId);
+  Promise.resolve()
+    .then(() => sessionManager.create(sessionId))
+    .catch((error) =>
+      log?.warn?.(
+        { sessionId, error: error?.message },
+        "Falha ao regenerar QR automaticamente",
+      ),
+    )
+    .finally(() => regenerating.delete(sessionId));
+}
+
+function buildQrHtml(sessionId, qrCode, connected = false) {
+  const content = connected
+    ? `<p style="color:#128C7E;font-size:1.1rem">✅ Sessão <strong>${sessionId}</strong> conectada. Pode fechar esta página.</p>`
+    : qrCode
+      ? `<img src="${qrCode}" alt="QR Code" style="max-width:300px"/>`
+      : `<p style="color:#888">Gerando um novo QR para a sessão <strong>${sessionId}</strong>...</p>`;
 
   return `<!DOCTYPE html>
 <html lang="pt-BR">

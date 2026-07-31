@@ -20,6 +20,13 @@ export class SessionManager {
   #clients = new Map();
   #retryCount = new Map();
   #pairingCodes = new Map();
+  // O QR só era emitido no evento e devolvido na resposta do POST /sessions —
+  // nunca era guardado. Como GET /sessions/:id/qr-code e GET /sessions/qr-screen
+  // chamam getQrCode(), as duas rotas estouravam 500 ("getQrCode is not a
+  // function"). E não bastaria guardar o primeiro: o WhatsApp expira o QR a cada
+  // ~20s e o Baileys emite um novo, então o guardado tem que ser o mais recente,
+  // senão a tela mostra um código morto.
+  #qrCodes = new Map();
   #messageListeners = [];
   #disconnectListeners = [];
   #authenticatedListeners = [];
@@ -133,6 +140,7 @@ export class SessionManager {
 
     this.#retryCount.delete(sessionId);
     this.#pairingCodes.delete(sessionId);
+    this.#qrCodes.delete(sessionId);
     await client.disconnect();
     this.#clients.delete(sessionId);
 
@@ -142,6 +150,11 @@ export class SessionManager {
     }
 
     logger.info({ sessionId }, "Sessão removida");
+  }
+
+  /** QR mais recente da sessão, ou null se já autenticou / não existe. */
+  getQrCode(sessionId) {
+    return this.#qrCodes.get(sessionId) ?? null;
   }
 
   getClient(sessionId) {
@@ -197,6 +210,7 @@ export class SessionManager {
 
       client.once("qr", (qrBase64) => {
         cleanup();
+        this.#qrCodes.set(sessionId, qrBase64);
         this.#bindLiveEvents(sessionId, client);
         this.#clients.set(sessionId, client);
         logger.info({ sessionId }, "QR code gerado");
@@ -261,6 +275,12 @@ export class SessionManager {
   }
 
   #bindLiveEvents(sessionId, client) {
+    // O `once` do setup pega só o primeiro QR. Este listener contínuo mantém o
+    // mais recente, que é o que a tela precisa servir enquanto ninguém escaneia.
+    client.on("qr", (qrBase64) => {
+      this.#qrCodes.set(sessionId, qrBase64);
+    });
+
     client.on("connected", () => {
       this.#retryCount.set(sessionId, 0);
       logger.info({ sessionId }, "Sessão conectada");
@@ -268,6 +288,8 @@ export class SessionManager {
 
     client.on("authenticated", (phone) => {
       this.#pairingCodes.delete(sessionId);
+      // Autenticou: o QR virou lixo e não pode continuar sendo servido.
+      this.#qrCodes.delete(sessionId);
       logger.info({ sessionId, phoneNumber: phone }, "Sessão autenticada");
       for (const listener of this.#authenticatedListeners) {
         listener(sessionId, phone);
@@ -309,6 +331,7 @@ export class SessionManager {
 
     this.#clients.delete(sessionId);
     this.#pairingCodes.delete(sessionId);
+    this.#qrCodes.delete(sessionId);
     this.#retryCount.delete(sessionId);
   }
 

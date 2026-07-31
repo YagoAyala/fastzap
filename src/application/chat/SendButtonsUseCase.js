@@ -1,4 +1,4 @@
-import { proto } from "@whiskeysockets/baileys";
+import { sendButtons } from "baileys_helpers";
 import { SessionNotFoundError, ValidationError } from "../../domain/errors/index.js";
 import { PhoneFormatter } from "../../infrastructure/whatsapp/PhoneFormatter.js";
 
@@ -60,7 +60,7 @@ export class SendButtonsUseCase {
     const client = this.sessionManager.getClient(sessionId);
     if (!client) throw new SessionNotFoundError(sessionId);
 
-    const jid = PhoneFormatter.toJid(phone);
+    const jid = await PhoneFormatter.toCanonicalJid(phone, client);
     const cascade = strategies.filter((s) => DEFAULT_CASCADE.includes(s));
     if (cascade.length === 0) {
       throw new ValidationError("strategies: nenhuma estratégia válida");
@@ -116,40 +116,36 @@ export class SendButtonsUseCase {
     }
   }
 
-  /** InteractiveMessage + NativeFlowMessage — o botão "de verdade". */
+  /**
+   * InteractiveMessage + NativeFlowMessage — o botão "de verdade".
+   *
+   * Montar o proto e mandar por relayMessage NÃO basta: testado em 31/07/2026
+   * contra número real, a mensagem sai sem erro, ganha messageId e é descartada
+   * em silêncio pela Meta — não chega nem como texto. O que falta não é o
+   * conteúdo, é o ENVELOPE: o WhatsApp só renderiza o botão quando a stanza vem
+   * embrulhada nos nós binários `biz` / `interactive` / `native_flow` que o
+   * cliente oficial emite (e `bot` com `biz_bot:1` em conversa privada).
+   * `relayMessage` não injeta nenhum deles.
+   *
+   * baileys_helpers reproduz esses nós via additionalNodes, sem precisar forkar
+   * o Baileys. Por isso a construção do proto sai daqui e vai pra ela.
+   */
   async #sendInteractive(client, jid, { text, footer, buttons }) {
-    const interactive = proto.Message.InteractiveMessage.create({
-      body: proto.Message.InteractiveMessage.Body.create({ text }),
-      footer: proto.Message.InteractiveMessage.Footer.create({
-        text: footer || "",
-      }),
-      nativeFlowMessage:
-        proto.Message.InteractiveMessage.NativeFlowMessage.create({
-          buttons: buttons.map((button) => ({
-            name: "quick_reply",
-            buttonParamsJson: JSON.stringify({
-              display_text: button.title,
-              id: button.id,
-            }),
-          })),
-        }),
+    const socket = client.socket;
+    if (!socket) {
+      throw new Error("Socket indisponível para envio interativo");
+    }
+
+    const sent = await sendButtons(socket, jid, {
+      text,
+      ...(footer && { footer }),
+      buttons: buttons.map((button) => ({
+        id: button.id,
+        text: button.title,
+      })),
     });
 
-    // O wrapper viewOnceMessage é o que faz clientes recentes renderizarem o
-    // nativeFlow; sem ele muita versão ignora a mensagem inteira.
-    const generated = await client.sendRawMessage(jid, {
-      viewOnceMessage: {
-        message: {
-          messageContextInfo: {
-            deviceListMetadataVersion: 2,
-            deviceListMetadata: {},
-          },
-          interactiveMessage: interactive,
-        },
-      },
-    });
-
-    return { messageId: generated?.key?.id ?? null };
+    return { messageId: sent?.key?.id ?? null };
   }
 
   /** ButtonsMessage legado — algumas versões ainda desenham. */

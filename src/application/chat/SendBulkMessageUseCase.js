@@ -21,7 +21,7 @@ export class SendBulkMessageUseCase {
       const { phone, message } = items[i];
 
       try {
-        const jid = PhoneFormatter.toJid(phone);
+        const jid = await PhoneFormatter.toCanonicalJid(phone, client);
         await client.sendMessage(jid, { text: message });
         sent++;
       } catch {
