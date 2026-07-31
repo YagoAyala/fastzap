@@ -9,7 +9,8 @@
     "dev": "node --watch src/main.js",
     "migrate": "node-pg-migrate up --migrations-dir migrations --migration-file-language js",
     "migrate:down": "node-pg-migrate down --migrations-dir migrations --migration-file-language js",
-    "migrate:create": "node-pg-migrate create --migrations-dir migrations --migration-file-language js"
+    "migrate:create": "node-pg-migrate create --migrations-dir migrations --migration-file-language js",
+    "test": "node --test tests/"
   },
   "engines": {
     "node": ">=22.0.0"

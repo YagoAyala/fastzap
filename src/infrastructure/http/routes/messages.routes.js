@@ -79,7 +79,7 @@ export async function messageRoutes(app, { sessionManager }) {
   });
 
   app.post("/send-image", { schema: sendImageSchema }, async (req, reply) => {
-    const { phone, image, caption, viewOnce } = req.body;
+    const { phone, image, caption, viewOnce, lane } = req.body;
 
     const result = await sendUseCase.sendImage({
       sessionId: req.query.id,
@@ -87,26 +87,28 @@ export async function messageRoutes(app, { sessionManager }) {
       image,
       caption,
       viewOnce,
+      lane,
     });
 
     return reply.send(result);
   });
 
   app.post("/send-audio", { schema: sendAudioSchema }, async (req, reply) => {
-    const { phone, audio, ptt } = req.body;
+    const { phone, audio, ptt, lane } = req.body;
 
     const result = await sendUseCase.sendAudio({
       sessionId: req.query.id,
       phone,
       audio,
       ptt,
+      lane,
     });
 
     return reply.send(result);
   });
 
   app.post("/send-video", { schema: sendVideoSchema }, async (req, reply) => {
-    const { phone, video, caption, viewOnce } = req.body;
+    const { phone, video, caption, viewOnce, lane } = req.body;
 
     const result = await sendUseCase.sendVideo({
       sessionId: req.query.id,
@@ -114,6 +116,7 @@ export async function messageRoutes(app, { sessionManager }) {
       video,
       caption,
       viewOnce,
+      lane,
     });
 
     return reply.send(result);
@@ -123,7 +126,7 @@ export async function messageRoutes(app, { sessionManager }) {
     "/send-document",
     { schema: sendDocumentSchema },
     async (req, reply) => {
-      const { phone, document, fileName, caption } = req.body;
+      const { phone, document, fileName, caption, lane } = req.body;
 
       const result = await sendUseCase.sendDocument({
         sessionId: req.query.id,
@@ -131,6 +134,7 @@ export async function messageRoutes(app, { sessionManager }) {
         document,
         fileName,
         caption,
+        lane,
       });
 
       return reply.send(result);
@@ -138,7 +142,8 @@ export async function messageRoutes(app, { sessionManager }) {
   );
 
   app.post("/send-link", { schema: sendLinkSchema }, async (req, reply) => {
-    const { phone, message, linkUrl, title, linkDescription, image } = req.body;
+    const { phone, message, linkUrl, title, linkDescription, image, lane } =
+      req.body;
 
     const result = await sendUseCase.sendLink({
       sessionId: req.query.id,
@@ -148,6 +153,7 @@ export async function messageRoutes(app, { sessionManager }) {
       title,
       linkDescription,
       image,
+      lane,
     });
 
     return reply.send(result);
@@ -157,7 +163,7 @@ export async function messageRoutes(app, { sessionManager }) {
     "/send-location",
     { schema: sendLocationSchema },
     async (req, reply) => {
-      const { phone, lat, lng, address } = req.body;
+      const { phone, lat, lng, address, lane } = req.body;
 
       const result = await sendUseCase.sendLocation({
         sessionId: req.query.id,
@@ -165,6 +171,7 @@ export async function messageRoutes(app, { sessionManager }) {
         lat,
         lng,
         address,
+        lane,
       });
 
       return reply.send(result);
@@ -175,13 +182,14 @@ export async function messageRoutes(app, { sessionManager }) {
     "/send-contact",
     { schema: sendContactSchema },
     async (req, reply) => {
-      const { phone, contactName, contactPhone } = req.body;
+      const { phone, contactName, contactPhone, lane } = req.body;
 
       const result = await sendUseCase.sendContact({
         sessionId: req.query.id,
         phone,
         contactName,
         contactPhone,
+        lane,
       });
 
       return reply.send(result);

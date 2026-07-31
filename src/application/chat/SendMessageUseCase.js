@@ -26,7 +26,7 @@ export class SendMessageUseCase {
     return this._formatResult(result);
   }
 
-  async sendImage({ sessionId, phone, image, caption = "", viewOnce = false }) {
+  async sendImage({ sessionId, phone, image, caption = "", viewOnce = false, lane }) {
     const client = this._getClient(sessionId);
     const jid = await PhoneFormatter.toCanonicalJid(phone, client);
 
@@ -38,12 +38,12 @@ export class SendMessageUseCase {
       viewOnce,
     };
 
-    const result = await client.sendMessage(jid, content);
+    const result = await client.sendMessage(jid, content, { lane });
 
     return this._formatResult(result);
   }
 
-  async sendAudio({ sessionId, phone, audio, ptt = true }) {
+  async sendAudio({ sessionId, phone, audio, ptt = true, lane }) {
     const client = this._getClient(sessionId);
     const jid = await PhoneFormatter.toCanonicalJid(phone, client);
 
@@ -55,12 +55,12 @@ export class SendMessageUseCase {
       mimetype: "audio/ogg; codecs=opus",
     };
 
-    const result = await client.sendMessage(jid, content);
+    const result = await client.sendMessage(jid, content, { lane });
 
     return this._formatResult(result);
   }
 
-  async sendVideo({ sessionId, phone, video, caption = "", viewOnce = false }) {
+  async sendVideo({ sessionId, phone, video, caption = "", viewOnce = false, lane }) {
     const client = this._getClient(sessionId);
     const jid = await PhoneFormatter.toCanonicalJid(phone, client);
 
@@ -72,12 +72,12 @@ export class SendMessageUseCase {
       viewOnce,
     };
 
-    const result = await client.sendMessage(jid, content);
+    const result = await client.sendMessage(jid, content, { lane });
 
     return this._formatResult(result);
   }
 
-  async sendDocument({ sessionId, phone, document, fileName, caption = "" }) {
+  async sendDocument({ sessionId, phone, document, fileName, caption = "", lane }) {
     const client = this._getClient(sessionId);
     const jid = await PhoneFormatter.toCanonicalJid(phone, client);
 
@@ -90,7 +90,7 @@ export class SendMessageUseCase {
       mimetype: this._getMimeFromFileName(fileName),
     };
 
-    const result = await client.sendMessage(jid, content);
+    const result = await client.sendMessage(jid, content, { lane });
 
     return this._formatResult(result);
   }
@@ -103,6 +103,7 @@ export class SendMessageUseCase {
     title,
     linkDescription,
     image,
+    lane,
   }) {
     const client = this._getClient(sessionId);
     const jid = await PhoneFormatter.toCanonicalJid(phone, client);
@@ -120,12 +121,12 @@ export class SendMessageUseCase {
       },
     };
 
-    const result = await client.sendMessage(jid, content);
+    const result = await client.sendMessage(jid, content, { lane });
 
     return this._formatResult(result);
   }
 
-  async sendLocation({ sessionId, phone, lat, lng, address }) {
+  async sendLocation({ sessionId, phone, lat, lng, address, lane }) {
     const client = this._getClient(sessionId);
     const jid = await PhoneFormatter.toCanonicalJid(phone, client);
 
@@ -135,12 +136,12 @@ export class SendMessageUseCase {
         degreesLongitude: lng,
         name: address ?? "",
       },
-    });
+    }, { lane });
 
     return this._formatResult(result);
   }
 
-  async sendContact({ sessionId, phone, contactName, contactPhone }) {
+  async sendContact({ sessionId, phone, contactName, contactPhone, lane }) {
     const client = this._getClient(sessionId);
     const jid = await PhoneFormatter.toCanonicalJid(phone, client);
 
@@ -154,7 +155,7 @@ export class SendMessageUseCase {
         displayName: contactName,
         contacts: [{ vcard }],
       },
-    });
+    }, { lane });
 
     return this._formatResult(result);
   }
@@ -163,9 +164,13 @@ export class SendMessageUseCase {
     const client = this._getClient(sessionId);
     const jid = await PhoneFormatter.toCanonicalJid(phone, client);
 
+    // Reativa por CONSTRUÇÃO, não por declaração do chamador: só existe reação
+    // a uma mensagem que já está na conversa, então nunca é contato frio. Cair no
+    // default `proactive` fazia o recibo 👀 consumir o cap de 20/dia e depois ser
+    // recusado por ele — verificado em produção em 31/07/2026.
     const result = await client.sendMessage(jid, {
       react: { text: reaction, key: { remoteJid: jid, id: messageId } },
-    });
+    }, { lane: "reactive" });
 
     return this._formatResult(result);
   }

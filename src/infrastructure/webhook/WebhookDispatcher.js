@@ -426,19 +426,33 @@ export class WebhookDispatcher {
     return null;
   }
 
+  // Cada `return null` daqui vira mídia perdida do lado da Focca, então nenhum
+  // deles pode ser mudo: era impossível distinguir "não tinha mídia" de "o
+  // download falhou" de "a sessão sumiu", e as três somem do mesmo jeito.
   async #tryDownloadMedia(message, sessionId) {
     try {
-      if (!MediaDownloader.hasMedia(message)) return null;
+      if (!MediaDownloader.hasMedia(message)) {
+        logger.warn(
+          { sessionId, messageId: message?.key?.id ?? null },
+          "Mídia esperada mas o gate não reconheceu o conteúdo",
+        );
+        return null;
+      }
 
       const client = this.#sessionManager?.getClient(sessionId);
 
-      if (!client?.socket) return null;
+      if (!client?.socket) {
+        logger.warn({ sessionId }, "Sem socket para baixar a mídia");
+        return null;
+      }
 
       return await this.#mediaDownloader.downloadAsBase64(
         message,
         client.socket,
+        logger,
       );
-    } catch {
+    } catch (err) {
+      logger.error({ err, sessionId }, "Erro inesperado ao baixar mídia");
       return null;
     }
   }
