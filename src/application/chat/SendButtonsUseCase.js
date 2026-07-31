@@ -48,6 +48,7 @@ export class SendButtonsUseCase {
     text,
     footer = "",
     buttons,
+    lane,
     strategies = DEFAULT_CASCADE,
   }) {
     if (!Array.isArray(buttons) || buttons.length === 0) {
@@ -74,6 +75,7 @@ export class SendButtonsUseCase {
           text,
           footer,
           buttons,
+          lane,
         });
 
         return {
@@ -196,20 +198,20 @@ export class SendButtonsUseCase {
    * Enquete — o piso garantido. Está na API tipada do Baileys, é nativa e
    * clicável. A resposta chega como pollUpdateMessage.
    */
-  async #sendPoll(client, jid, { text, buttons }) {
+  async #sendPoll(client, jid, { text, buttons, lane }) {
     const result = await client.sendMessage(jid, {
       poll: {
         name: text,
         values: buttons.map((button) => button.title),
         selectableCount: 1,
       },
-    });
+    }, { lane });
 
     return { messageId: result?.key?.id ?? null };
   }
 
   /** Rede final: menu numerado em texto puro. Nunca falha. */
-  async #sendText(client, jid, { text, footer, buttons }) {
+  async #sendText(client, jid, { text, footer, buttons, lane }) {
     const options = buttons
       .map((button, index) => `${NUMBER_EMOJI[index] ?? `${index + 1}.`} ${button.title}`)
       .join("\n");
@@ -217,7 +219,7 @@ export class SendButtonsUseCase {
       .filter((line) => line !== null)
       .join("\n");
 
-    const result = await client.sendMessage(jid, { text: body });
+    const result = await client.sendMessage(jid, { text: body }, { lane });
 
     return { messageId: result?.key?.id ?? null };
   }

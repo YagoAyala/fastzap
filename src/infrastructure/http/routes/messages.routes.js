@@ -47,7 +47,7 @@ export async function messageRoutes(app, { sessionManager }) {
   });
 
   app.post("/send-buttons", { schema: sendButtonsSchema }, async (req, reply) => {
-    const { phone, text, footer, buttons, strategies } = req.body;
+    const { phone, text, footer, buttons, strategies, lane } = req.body;
 
     const result = await sendButtonsUseCase.execute({
       sessionId: req.query.id,
@@ -55,6 +55,7 @@ export async function messageRoutes(app, { sessionManager }) {
       text,
       footer,
       buttons,
+      lane,
       ...(strategies && { strategies }),
     });
 

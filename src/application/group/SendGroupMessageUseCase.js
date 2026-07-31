@@ -15,7 +15,11 @@ export class SendGroupMessageUseCase {
 
     const groupJid = PhoneFormatter.toGroupJid(jid);
 
-    const result = await client.sendMessage(groupJid, message);
+    // Todo outro use case envolve o texto em { text: ... }; aqui ia a string
+    // crua, e o Baileys estoura com "Cannot use 'in' operator to search for
+    // 'image' in <texto>" — ou seja, TODO envio de texto pra grupo dava 500.
+    // Grupo "voltou a funcionar" só nos botões; o texto nunca chegou a sair.
+    const result = await client.sendMessage(groupJid, { text: message });
 
     const messageId = result?.key?.id ?? result?.key?.id ?? "";
 
