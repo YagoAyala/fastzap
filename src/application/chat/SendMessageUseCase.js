@@ -6,11 +6,22 @@ export class SendMessageUseCase {
     this.sessionManager = sessionManager;
   }
 
-  async sendText({ sessionId, phone, message, lane }) {
+  async sendText({ sessionId, phone, message, lane, quotedId }) {
     const client = this._getClient(sessionId);
     const jid = await PhoneFormatter.toCanonicalJid(phone, client);
 
-    const result = await client.sendMessage(jid, { text: message }, { lane });
+    // `quoted` precisa de uma mensagem com key + message. Um stub com o id basta
+    // pro WhatsApp resolver a citação do lado do cliente — não é necessário ter
+    // o conteúdo original guardado.
+    const quoted = quotedId
+      ? { key: { remoteJid: jid, id: quotedId, fromMe: false }, message: {} }
+      : undefined;
+
+    const result = await client.sendMessage(
+      jid,
+      { text: message },
+      { lane, quoted }
+    );
 
     return this._formatResult(result);
   }

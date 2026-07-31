@@ -97,10 +97,37 @@ export class WebhookDispatcher {
       ? await this.#resolvePhone(key.participant ?? "", sessionId)
       : phone;
 
+    // Contexto de citação: quando o usuário responde citando uma mensagem, o
+    // WhatsApp manda a original em contextInfo. Sem repassar, a Focca perde a
+    // referência do que está sendo respondido — e vários fastpaths dela decidem
+    // com base em "isto é resposta a algo?".
+    const ctx =
+      msgContent?.extendedTextMessage?.contextInfo ??
+      msgContent?.imageMessage?.contextInfo ??
+      msgContent?.videoMessage?.contextInfo ??
+      msgContent?.audioMessage?.contextInfo ??
+      null;
+    const quoted = ctx?.quotedMessage
+      ? {
+          messageId: ctx.stanzaId ?? null,
+          fromMe: ctx.participant
+            ? String(ctx.participant).startsWith(
+                String(this.#sessionManager?.getClient(sessionId)?.socket?.user?.id || '').split(':')[0]
+              )
+            : false,
+          text:
+            ctx.quotedMessage.conversation ??
+            ctx.quotedMessage.extendedTextMessage?.text ??
+            ctx.quotedMessage.imageMessage?.caption ??
+            null,
+        }
+      : null;
+
     return {
       instanceId: sessionId,
       phone,
       participantPhone,
+      ...(quoted && { quoted }),
       chatName: msg.pushName ?? null,
       fromMe,
       isGroup,

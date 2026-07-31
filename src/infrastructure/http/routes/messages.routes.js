@@ -63,12 +63,13 @@ export async function messageRoutes(app, { sessionManager }) {
   });
 
   app.post("/send-text", { schema: sendTextSchema }, async (req, reply) => {
-    const { phone, message, lane } = req.body;
+    const { phone, message, lane, quotedId } = req.body;
 
     const result = await sendUseCase.sendText({
       sessionId: req.query.id,
       phone,
       message,
+      quotedId,
       // Sem lane declarada, o default é `proactive`: falhar pro lado seguro é o
       // certo aqui — tratar proativa como reativa é o erro caro.
       lane,
