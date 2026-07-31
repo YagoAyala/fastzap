@@ -56,9 +56,24 @@ export class SessionManager {
     );
 
     for (const id of orphaned) {
+      // Quarentena, não destruição. O useMultiFileAuthState grava creds.json
+      // sem tmp+rename: se o processo morrer no meio da escrita (OOM, restart),
+      // o arquivo trunca — e apagar aqui destruiria a ÚNICA cópia das
+      // credenciais, obrigando a re-parear na mão com o celular.
       const authDir = path.resolve(sessionsDir, `md_${id}`);
-      fs.rmSync(authDir, { recursive: true, force: true });
-      logger.info({ sessionId: id }, "Pasta órfã removida no startup");
+      const quarantine = `${authDir}.corrupt-${Date.now()}`;
+      try {
+        fs.renameSync(authDir, quarantine);
+        logger.warn(
+          { sessionId: id, quarantine },
+          "Sessão ilegível movida para quarentena no startup (não apagada)",
+        );
+      } catch (err) {
+        logger.error(
+          { sessionId: id, err: err?.message },
+          "Falha ao pôr sessão ilegível em quarentena",
+        );
+      }
     }
 
     if (restorable.length === 0) {
@@ -281,6 +296,19 @@ export class SessionManager {
       this.#qrCodes.set(sessionId, qrBase64);
     });
 
+    // Sem este ouvinte a sessão morre PARA SEMPRE em silêncio: depois de um
+    // restartRequired, o primeiro connection.update costuma ser `close`, o
+    // cliente emite setup_failed e retorna SEM emitir `disconnected` — então
+    // #scheduleReconnect nunca era chamado. Sobrava um cliente zumbi no Map,
+    // com o processo vivo e o /health verde, sem mandar nem receber nada.
+    client.on("setup_failed", (reason) => {
+      logger.warn(
+        { sessionId, reason },
+        "Setup falhou em sessão viva — reagendando reconexão",
+      );
+      this.#scheduleReconnect(sessionId);
+    });
+
     client.on("connected", () => {
       this.#retryCount.set(sessionId, 0);
       logger.info({ sessionId }, "Sessão conectada");
@@ -369,7 +397,15 @@ export class SessionManager {
       return;
     }
 
-    const delay = Math.min(env.RECONNECT_INTERVAL_MS * attempts, 60_000);
+    // Antes: delay linear e, na 6ª tentativa, DESISTIA PARA SEMPRE — ou seja,
+    // qualquer indisponibilidade maior que ~75 segundos matava o gateway em
+    // definitivo, sem cron nem healthcheck pra reativar. Agora o backoff é
+    // exponencial com teto de 5min e MAX_RETRIES vira gatilho de ALERTA, não de
+    // abandono: continua tentando pra sempre, porque desistir é sempre pior.
+    const delay = Math.min(
+      env.RECONNECT_INTERVAL_MS * 2 ** Math.max(0, attempts - 1),
+      300_000
+    );
     logger.info({ sessionId, attempts, delayMs: delay }, "Reconexão agendada");
 
     setTimeout(async () => {

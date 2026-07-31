@@ -43,13 +43,26 @@ export function buildServer({
     "/health",
     { schema: { hide: true }, config: { public: true } },
     async (_req, reply) => {
-      return reply.send({
-        success: true,
-        message: "API operacional",
+      // `activeSessions` vinha de listIds(), que conta cliente ZUMBI: processo
+      // vivo, socket morto, e o health devolvia 200 alegre enquanto o WhatsApp
+      // estava fora do ar. Health que só sabe dizer "o processo subiu" é
+      // falso-verde — o que importa é se a sessão está autenticada.
+      const ids = sessionManager.listIds();
+      const connected = ids.filter((id) => sessionManager.isConnected(id));
+      const healthy = ids.length === 0 || connected.length > 0;
+
+      return reply.status(healthy ? 200 : 503).send({
+        success: healthy,
+        message: healthy ? "API operacional" : "Nenhuma sessão autenticada",
         data: {
           uptime: process.uptime(),
           timestamp: new Date().toISOString(),
-          activeSessions: sessionManager.listIds().length,
+          activeSessions: ids.length,
+          connectedSessions: connected.length,
+          sessions: ids.map((id) => ({
+            id,
+            connected: sessionManager.isConnected(id),
+          })),
         },
       });
     },

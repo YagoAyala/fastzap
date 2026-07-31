@@ -194,7 +194,18 @@ export class BaileysClient extends EventEmitter {
 
       if (connection === 'close') {
         const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut
+        // `forbidden` (403) é o sinal de BAN, e estava classificado como
+        // "reconecta": um número banido entrava em loop de reconexão e o alerta
+        // de sessão perdida nunca disparava — o produto morria em silêncio, e
+        // martelar reconexão contra um número bloqueado escala bloqueio
+        // temporário para permanente. `connectionReplaced` (440) é outra sessão
+        // assumindo o número: insistir aqui vira cabo de guerra entre as duas.
+        const TERMINAL_CODES = new Set([
+          DisconnectReason.loggedOut,
+          DisconnectReason.forbidden,
+          DisconnectReason.connectionReplaced,
+        ])
+        const shouldReconnect = !TERMINAL_CODES.has(statusCode)
         const reason = DisconnectReason[statusCode] ?? 'unknown'
 
         if (this.#pendingSetup) {
@@ -203,7 +214,12 @@ export class BaileysClient extends EventEmitter {
           return
         }
 
-        this.emit('disconnected', reason, shouldReconnect && !this.#isShuttingDown)
+        this.emit(
+          'disconnected',
+          reason,
+          shouldReconnect && !this.#isShuttingDown,
+          statusCode
+        )
       }
     })
   }
