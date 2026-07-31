@@ -15,8 +15,12 @@ import { OutboundQueue } from './OutboundQueue.js'
 import { SendBudget } from './SendBudget.js'
 
 // proto.WebMessageInfo.Status — o número cru não diz nada pra quem consome.
+// 'error' é o rótulo do proto, mas quem consome conta 'failed' — a sentinela de
+// entrega da Focca faz `WHERE status='failed'` e ficaria zero pra sempre,
+// falso-verde exatamente no alerta que existe pra pegar entrega quebrada.
+// Emitir os dois é mais barato que sincronizar vocabulário entre dois repos.
 const STATUS_LABELS = {
-  0: 'error',
+  0: 'failed',
   1: 'pending',
   2: 'sent',
   3: 'delivered',
@@ -161,6 +165,11 @@ export class BaileysClient extends EventEmitter {
 
       return generated
     }, { lane: 'proactive', jid })
+  }
+
+  /** Expõe a fila pra quem precisa enfileirar sem passar por sendMessage. */
+  enqueueSend(task, opts) {
+    return this.#outbound.enqueue(task, opts)
   }
 
   outboundStats() {

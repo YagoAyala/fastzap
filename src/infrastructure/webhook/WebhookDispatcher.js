@@ -111,7 +111,34 @@ export class WebhookDispatcher {
     };
   }
 
-  async #extractTypePayload(msg, msgContent, sessionId) {
+  /**
+   * Desembrulha envelopes que só existem pra carregar outra mensagem.
+   *
+   * Quem tem "mensagens temporárias" ligado no WhatsApp manda TUDO dentro de
+   * ephemeralMessage; view-once idem. Sem desembrulhar, nenhum dos `if` de tipo
+   * casava, caía em `unknown` e o webhook respondia 200 IGNORED — ou seja, essa
+   * pessoa não recebia resposta pra absolutamente nada, sem erro em lugar
+   * nenhum. Aninhamento é possível (viewOnce dentro de ephemeral), então
+   * desembrulha em laço, com teto pra não girar em payload malformado.
+   */
+  #unwrapEnvelopes(msgContent) {
+    let content = msgContent;
+    for (let depth = 0; depth < 4; depth += 1) {
+      const inner =
+        content?.ephemeralMessage?.message ??
+        content?.viewOnceMessage?.message ??
+        content?.viewOnceMessageV2?.message ??
+        content?.viewOnceMessageV2Extension?.message ??
+        content?.documentWithCaptionMessage?.message ??
+        content?.editedMessage?.message;
+      if (!inner) break;
+      content = inner;
+    }
+    return content;
+  }
+
+  async #extractTypePayload(msg, rawContent, sessionId) {
+    const msgContent = this.#unwrapEnvelopes(rawContent);
     // Resposta de opção clicada. Precisa vir ANTES do bloco de texto: o
     // buttonsResponseMessage também carrega o rótulo em texto, e sem isso a
     // escolha chegaria como mensagem comum — o chamador perderia o `id` e não

@@ -132,20 +132,28 @@ export class SendButtonsUseCase {
    * baileys_helpers reproduz esses nós via additionalNodes, sem precisar forkar
    * o Baileys. Por isso a construção do proto sai daqui e vai pra ela.
    */
-  async #sendInteractive(client, jid, { text, footer, buttons }) {
+  async #sendInteractive(client, jid, { text, footer, buttons, lane }) {
     const socket = client.socket;
     if (!socket) {
       throw new Error("Socket indisponível para envio interativo");
     }
 
-    const sent = await sendButtons(socket, jid, {
+    // Passa pela fila do client, não direto no socket: o comentário da
+    // OutboundQueue diz que ela é inburlável por morar no transporte, mas
+    // sendButtons() do helper recebe o SOCKET e escapava. Botão é a saída mais
+    // comum da Focca (pitch, confirmação, lembrete), então era justamente o
+    // caminho de maior volume sem pacing, sem cap e sem orçamento.
+    const sent = await client.enqueueSend(
+      () => sendButtons(socket, jid, {
       text,
       ...(footer && { footer }),
-      buttons: buttons.map((button) => ({
-        id: button.id,
-        text: button.title,
-      })),
-    });
+        buttons: buttons.map((button) => ({
+          id: button.id,
+          text: button.title,
+        })),
+      }),
+      { lane, jid }
+    );
 
     return { messageId: sent?.key?.id ?? null };
   }
