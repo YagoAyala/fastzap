@@ -49,6 +49,16 @@ export const sendTextSchema = {
     type: "object",
     required: ["phone", "message"],
     properties: {
+      lane: {
+        type: "string",
+        enum: ["reactive", "proactive"],
+        description:
+          "Faixa da fila de saída. `reactive` = resposta a quem acabou de escrever (prioridade, sem cap por destinatário). `proactive` = contato iniciado por nós (espaçado e limitado). Default: proactive.",
+      },
+      quotedId: {
+        type: "string",
+        description: "messageId da mensagem a ser citada na resposta.",
+      },
       phone: {
         type: "string",
         minLength: 8,
@@ -81,6 +91,12 @@ export const sendImageSchema = {
     type: "object",
     required: ["phone", "image"],
     properties: {
+      lane: {
+        type: "string",
+        enum: ["reactive", "proactive"],
+        description:
+          "Faixa da fila de saída. `reactive` = resposta a quem acabou de escrever (prioridade, sem cap por destinatário). `proactive` = contato iniciado por nós (espaçado e limitado). Default: proactive.",
+      },
       phone: { type: "string", minLength: 8, example: "5511999999999" },
       image: {
         type: "string",
@@ -114,6 +130,12 @@ export const sendAudioSchema = {
     type: "object",
     required: ["phone", "audio"],
     properties: {
+      lane: {
+        type: "string",
+        enum: ["reactive", "proactive"],
+        description:
+          "Faixa da fila de saída. `reactive` = resposta a quem acabou de escrever (prioridade, sem cap por destinatário). `proactive` = contato iniciado por nós (espaçado e limitado). Default: proactive.",
+      },
       phone: { type: "string", minLength: 8, example: "5511999999999" },
       audio: {
         type: "string",
@@ -140,6 +162,12 @@ export const sendVideoSchema = {
     type: "object",
     required: ["phone", "video"],
     properties: {
+      lane: {
+        type: "string",
+        enum: ["reactive", "proactive"],
+        description:
+          "Faixa da fila de saída. `reactive` = resposta a quem acabou de escrever (prioridade, sem cap por destinatário). `proactive` = contato iniciado por nós (espaçado e limitado). Default: proactive.",
+      },
       phone: { type: "string", minLength: 8, example: "5511999999999" },
       video: {
         type: "string",
@@ -164,6 +192,12 @@ export const sendDocumentSchema = {
     type: "object",
     required: ["phone", "document", "fileName"],
     properties: {
+      lane: {
+        type: "string",
+        enum: ["reactive", "proactive"],
+        description:
+          "Faixa da fila de saída. `reactive` = resposta a quem acabou de escrever (prioridade, sem cap por destinatário). `proactive` = contato iniciado por nós (espaçado e limitado). Default: proactive.",
+      },
       phone: { type: "string", minLength: 8, example: "5511999999999" },
       document: {
         type: "string",
@@ -192,6 +226,12 @@ export const sendLinkSchema = {
     type: "object",
     required: ["phone", "message", "linkUrl"],
     properties: {
+      lane: {
+        type: "string",
+        enum: ["reactive", "proactive"],
+        description:
+          "Faixa da fila de saída. `reactive` = resposta a quem acabou de escrever (prioridade, sem cap por destinatário). `proactive` = contato iniciado por nós (espaçado e limitado). Default: proactive.",
+      },
       phone: { type: "string", minLength: 8, example: "5511999999999" },
       message: { type: "string", minLength: 1, example: "Acesse nosso site!" },
       linkUrl: {
@@ -221,6 +261,12 @@ export const sendLocationSchema = {
     type: "object",
     required: ["phone", "lat", "lng"],
     properties: {
+      lane: {
+        type: "string",
+        enum: ["reactive", "proactive"],
+        description:
+          "Faixa da fila de saída. `reactive` = resposta a quem acabou de escrever (prioridade, sem cap por destinatário). `proactive` = contato iniciado por nós (espaçado e limitado). Default: proactive.",
+      },
       phone: { type: "string", minLength: 8, example: "5511999999999" },
       lat: { type: "number", description: "Latitude", example: -23.5505 },
       lng: { type: "number", description: "Longitude", example: -46.6333 },
@@ -239,6 +285,12 @@ export const sendContactSchema = {
     type: "object",
     required: ["phone", "contactName", "contactPhone"],
     properties: {
+      lane: {
+        type: "string",
+        enum: ["reactive", "proactive"],
+        description:
+          "Faixa da fila de saída. `reactive` = resposta a quem acabou de escrever (prioridade, sem cap por destinatário). `proactive` = contato iniciado por nós (espaçado e limitado). Default: proactive.",
+      },
       phone: { type: "string", minLength: 8, example: "5511999999999" },
       contactName: { type: "string", minLength: 1, example: "João Silva" },
       contactPhone: { type: "string", minLength: 8, example: "5511988888888" },

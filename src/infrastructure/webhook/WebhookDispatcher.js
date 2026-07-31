@@ -101,24 +101,43 @@ export class WebhookDispatcher {
     // WhatsApp manda a original em contextInfo. Sem repassar, a Focca perde a
     // referência do que está sendo respondido — e vários fastpaths dela decidem
     // com base em "isto é resposta a algo?".
+    // Desembrulha ANTES de procurar contextInfo. Lendo do conteúdo cru, quem usa
+    // chat temporário (ephemeralMessage) nunca tinha citação — justamente a
+    // população que o desembrulho foi feito pra resgatar. E faltavam documento e
+    // figurinha: citar anexando um PDF perdia a referência.
+    const unwrapped = this.#unwrapEnvelopes(msgContent);
     const ctx =
-      msgContent?.extendedTextMessage?.contextInfo ??
-      msgContent?.imageMessage?.contextInfo ??
-      msgContent?.videoMessage?.contextInfo ??
-      msgContent?.audioMessage?.contextInfo ??
+      unwrapped?.extendedTextMessage?.contextInfo ??
+      unwrapped?.imageMessage?.contextInfo ??
+      unwrapped?.videoMessage?.contextInfo ??
+      unwrapped?.audioMessage?.contextInfo ??
+      unwrapped?.documentMessage?.contextInfo ??
+      unwrapped?.stickerMessage?.contextInfo ??
       null;
+
+    // `fromMe` falhava ABERTO: com a sessão reconectando, `socket.user.id` é
+    // undefined, `String(undefined).split(':')[0]` vira "" e
+    // `startsWith("")` é SEMPRE true — toda citação virava "minha". Exigir um
+    // id não-vazio faz falhar fechado, que é o lado seguro: no máximo perde a
+    // marcação, nunca inventa autoria.
+    const selfId = String(
+      this.#sessionManager?.getClient(sessionId)?.socket?.user?.id || "",
+    ).split(":")[0];
+    const quotedFromMe =
+      Boolean(selfId) && Boolean(ctx?.participant)
+        ? String(ctx.participant).split(":")[0].split("@")[0] ===
+          selfId.split("@")[0]
+        : false;
+
     const quoted = ctx?.quotedMessage
       ? {
           messageId: ctx.stanzaId ?? null,
-          fromMe: ctx.participant
-            ? String(ctx.participant).startsWith(
-                String(this.#sessionManager?.getClient(sessionId)?.socket?.user?.id || '').split(':')[0]
-              )
-            : false,
+          fromMe: quotedFromMe,
           text:
             ctx.quotedMessage.conversation ??
             ctx.quotedMessage.extendedTextMessage?.text ??
             ctx.quotedMessage.imageMessage?.caption ??
+            ctx.quotedMessage.documentMessage?.caption ??
             null,
         }
       : null;

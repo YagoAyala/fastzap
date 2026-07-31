@@ -45,12 +45,15 @@ export async function groupRoutes(
   });
 
   app.post("/send", { schema: sendGroupMessageSchema }, async (req, reply) => {
-    const { phone, message } = req.body;
+    const { phone, message, lane } = req.body;
 
     const result = await sendGroupMessage.execute({
       sessionId: req.query.id,
       jid: phone,
       message,
+      // Sem repassar, resposta em grupo entrava como contato frio e um grupo
+      // movimentado emudecia ao bater 20 mensagens no dia.
+      lane,
     });
 
     return reply.send(result);

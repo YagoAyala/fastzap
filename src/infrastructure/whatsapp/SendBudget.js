@@ -98,9 +98,26 @@ export class SendBudget {
     return { allowed: true };
   }
 
-  commit({ jid = "" }) {
+  /**
+   * `lane` NÃO é opcional por acidente — o commit precisa concordar com o
+   * check, e não concordava.
+   *
+   * O `check()` isenta reativo do cap por destinatário (responder quem
+   * escreveu não é assédio), mas o `commit()` incrementava `r:` pra todo mundo.
+   * O contador de contato FRIO era engordado por RESPOSTA, e o proativo depois
+   * era recusado por um limite que ele não gastou.
+   *
+   * Dano real em 31/07/2026: um usuário premium mandou 6 mensagens de manhã;
+   * cada inbound gera 2 operações de reação (põe ⏳ e tira) + a resposta. Deu
+   * 20/20 às 08h28 e o lembrete das 12h dele foi RECUSADO — o dia proativo
+   * inteiro tinha sido consumido por respostas ao próprio usuário.
+   *
+   * Os tetos diário e horário continuam contando tudo de propósito: eles medem
+   * velocidade da conta, e velocidade é velocidade independente da faixa.
+   */
+  commit({ jid = "", lane = "proactive" }) {
     const keys = [`d:${DAY()}`, `h:${HOUR()}`];
-    if (jid) keys.push(`r:${jid}:${DAY()}`);
+    if (jid && lane !== "reactive") keys.push(`r:${jid}:${DAY()}`);
 
     for (const key of keys) {
       this.#cache.set(key, this.#get(key) + 1);

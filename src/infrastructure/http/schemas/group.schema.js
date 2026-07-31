@@ -92,6 +92,12 @@ export const sendGroupMessageSchema = {
     type: "object",
     required: ["phone", "message"],
     properties: {
+      lane: {
+        type: "string",
+        enum: ["reactive", "proactive"],
+        description:
+          "Faixa da fila de saída. `reactive` = resposta a quem acabou de escrever (prioridade, sem cap por destinatário). `proactive` = contato iniciado por nós (espaçado e limitado). Default: proactive.",
+      },
       phone: {
         type: "string",
         minLength: 1,

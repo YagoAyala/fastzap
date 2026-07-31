@@ -98,7 +98,10 @@ export class OutboundQueue {
   }
 
   #commitRecipient(entry) {
-    this.budget?.commit({ jid: entry.jid });
+    // A faixa precisa ir junto: sem ela o orçamento persistido contava resposta
+    // como se fosse contato frio, e o contador em memória logo abaixo (que
+    // isenta reativo) discordava do persistido — que é o que manda.
+    this.budget?.commit({ jid: entry.jid, lane: entry.lane });
     if (entry.lane === "reactive" || !entry.jid) return;
     this.#perRecipientDay.set(
       entry.jid,
