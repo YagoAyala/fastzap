@@ -4,6 +4,7 @@ import pino from "pino";
 import { SessionManager } from "./infrastructure/whatsapp/SessionManager.js";
 import { WebhookDispatcher } from "./infrastructure/webhook/WebhookDispatcher.js";
 import { TelegramNotifier } from "./infrastructure/notifications/TelegramNotifier.js";
+import { GatewayAlerts } from "./infrastructure/notifications/GatewayAlerts.js";
 
 import { SessionRepository } from "./infrastructure/database/repositories/SessionRepository.js";
 import { ChatRepository } from "./infrastructure/database/repositories/ChatRepository.js";
@@ -32,20 +33,40 @@ async function bootstrap() {
   const sessionManager = new SessionManager();
 
   const telegram = new TelegramNotifier();
+  const alerts = new GatewayAlerts({ notifier: telegram });
 
   // Vigia de shadowban: o modo de falha em que a sessão segue autenticada, os
   // envios seguem "dando sucesso", e nada chega nem volta. É o único que não
   // aparece em nenhum log de erro — só na ausência de tráfego de entrada.
-  sessionManager.startHealthWatch(telegram);
+  await sessionManager.startHealthWatch(telegram);
+
+  // Os quatro eventos que significam "o gateway parou e ninguém vai saber":
+  // sessão perdida, QR pedido, quedas em série e envio falhando em série.
+  // Nenhum deles tinha alerta — a auditoria de 03/08/2026 só achou as quedas
+  // porque foi ler `docker logs` por SSH.
+  sessionManager.onQr((sessionId) => alerts.qrRequested(sessionId));
+
+  sessionManager.onConnectionChange((sessionId, reason) =>
+    alerts.recordDisconnect(sessionId, reason),
+  );
+
+  sessionManager.onSendResult((result) => alerts.recordSendResult(result));
+
+  sessionManager.onMessageStatus((status) => {
+    if (status?.status !== "undelivered") return;
+    alerts.undelivered({
+      messageId: status.messageId,
+      jid: status.jid,
+      ageMs: status.ageMs ?? 0,
+    });
+  });
 
   sessionManager.onDisconnect(async (sessionId, reason) => {
-    logger.warn({ sessionId, reason }, "Sessão perdida permanentemente");
-
     await sessionRepository
       .update(sessionId, { status: "disconnected" })
       .catch(() => {});
 
-    await telegram.notifySessionLost(sessionId, reason);
+    alerts.sessionLost(sessionId, reason);
   });
 
   sessionManager.onAuthenticated(async (sessionId, phoneNumber) => {
@@ -85,6 +106,7 @@ async function bootstrap() {
     sessionRepository,
     chatRepository,
     messageRepository,
+    alerts,
   });
 
   await startServer(app);
@@ -99,6 +121,10 @@ async function bootstrap() {
 
     try {
       await app.close();
+      // A baseline do vigia é write-behind: sem este flush, um SIGTERM entre
+      // duas janelas de escrita perderia justamente as observações mais
+      // recentes — as que o próximo boot precisa pra não ficar cego.
+      await sessionManager.flushHealth();
       await closeDatabase();
       logger.info("Encerramento concluído");
     } catch (err) {

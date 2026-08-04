@@ -15,6 +15,18 @@ services:
       - .env
     environment:
       SESSIONS_DIR: /app/sessions
+    # Sem isto, TODO log do gateway morre dentro da VM: disconnect, erro de
+    # envio e reconexão só existiam via `docker logs` por SSH, e a auditoria de
+    # 03/08/2026 só achou as 19 quedas da semana porque foi olhar na mão.
+    #
+    # `gcplogs` manda direto pro Cloud Logging (a VM precisa do escopo
+    # `logging-write`, que ela já tem por padrão). Fica atrás de variável porque
+    # o driver exige metadata server do GCP e quebraria o docker-compose local.
+    #
+    # Em produção a VM sobe o container com `docker run` (não com compose): o
+    # mesmo efeito ali é `--log-driver=gcplogs --log-opt labels=app`.
+    logging:
+      driver: ${DOCKER_LOG_DRIVER:-json-file}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:' + (process.env.PORT || 5300) + '/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
       interval: 30s

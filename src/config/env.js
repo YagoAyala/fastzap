@@ -17,6 +17,11 @@ const schema = z.object({
   RECONNECT_INTERVAL_MS: z.coerce.number().default(5000),
   SESSIONS_DIR: z.string().default("./sessions"),
 
+  // Prazo até declarar `undelivered` uma mensagem aceita que nunca recebeu
+  // recibo de entrega. Precisa ser folgado: aparelho desligado produz o mesmo
+  // silêncio de entrega morta, e o alarme só vale se quase não erra.
+  DELIVERY_ACK_TIMEOUT_MS: z.coerce.number().default(15 * 60 * 1000),
+
   WEBHOOK_URL: z
     .string()
     .transform((v) => (v.trim() === "" ? undefined : v))

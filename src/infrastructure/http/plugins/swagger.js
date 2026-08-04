@@ -45,11 +45,35 @@ const SHARED_SCHEMAS = [
     },
   },
   {
+    // Este schema não é documentação: o fast-json-stringify serializa a resposta
+    // POR ELE e APAGA todo campo que não estiver aqui. `/send-buttons` devolvia
+    // `strategy` e `attempted` desde sempre e nenhum dos dois jamais chegou ao
+    // consumidor — o aviso "o botão nativo degradou" era impossível de disparar
+    // do outro lado. `nullable` no messageId pelo mesmo motivo: id ausente é um
+    // fato que precisa TRAFEGAR, não virar string vazia.
     $id: "MessageSent",
     type: "object",
     properties: {
-      messageId: { type: "string", example: "3EB0ABC123DEF" },
-      id: { type: "string", example: "3EB0ABC123DEF" },
+      messageId: { type: "string", nullable: true, example: "3EB0ABC123DEF" },
+      id: { type: "string", nullable: true, example: "3EB0ABC123DEF" },
+      strategy: {
+        type: "string",
+        nullable: true,
+        description:
+          "Estratégia que venceu a cascata de botões (interactive/buttons/list/poll/text).",
+        example: "interactive",
+      },
+      attempted: {
+        type: "array",
+        description: "Estratégias que falharam antes, com o erro de cada uma.",
+        items: {
+          type: "object",
+          properties: {
+            strategy: { type: "string" },
+            error: { type: "string" },
+          },
+        },
+      },
     },
   },
   {

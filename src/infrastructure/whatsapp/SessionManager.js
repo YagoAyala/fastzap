@@ -34,6 +34,9 @@ export class SessionManager {
   #healthTimer = null;
   #disconnectListeners = [];
   #authenticatedListeners = [];
+  #qrListeners = [];
+  #sendResultListeners = [];
+  #connectionListeners = [];
 
   async restoreAll() {
     const sessionsDir = path.resolve(env.SESSIONS_DIR);
@@ -204,10 +207,17 @@ export class SessionManager {
   /**
    * Liga o vigia de silêncio. Roda a cada 5 min: o alerta é sobre AUSÊNCIA de
    * tráfego, então não existe evento que o dispare — precisa de relógio.
+   *
+   * `await` no load porque a baseline vem do banco: começar a checar antes de
+   * reidratar faria o vigia se declarar "sem_baseline" e ficar mudo até
+   * reaprender do zero — o mesmo buraco que a persistência veio fechar.
    */
-  startHealthWatch(notifier) {
+  async startHealthWatch(notifier, { sessionId = "default" } = {}) {
     if (this.#healthTimer) return;
-    this.#health = new SessionHealth({ notifier });
+    this.#health = new SessionHealth({ notifier, sessionId });
+    await this.#health.load().catch((err) =>
+      logger.warn({ err: err?.message }, "Falha ao reidratar vigia de saúde"),
+    );
     this.#healthTimer = setInterval(() => {
       try {
         this.#health.check();
@@ -216,11 +226,23 @@ export class SessionManager {
       }
     }, 5 * 60 * 1000);
     this.#healthTimer.unref?.();
-    logger.info("Vigia de silêncio de entrada ativo (shadowban)");
+    logger.info(
+      { baseline: this.#health.snapshot() },
+      "Vigia de silêncio de entrada ativo (shadowban)",
+    );
   }
 
   healthSnapshot() {
     return this.#health?.snapshot() ?? null;
+  }
+
+  /** Descarrega a baseline pendente. Usado no shutdown. */
+  async flushHealth() {
+    if (!this.#health) return;
+    this.#health.stop();
+    await this.#health.flush().catch((err) =>
+      logger.warn({ err: err?.message }, "Falha ao descarregar vigia de saúde"),
+    );
   }
 
   onDisconnect(listener) {
@@ -229,6 +251,54 @@ export class SessionManager {
 
   onAuthenticated(listener) {
     this.#authenticatedListeners.push(listener);
+  }
+
+  /** QR emitido por sessão viva = pareamento perdido. Nada é mais crítico. */
+  onQr(listener) {
+    this.#qrListeners.push(listener);
+  }
+
+  /** Resultado de CADA envio, para quem quiser medir taxa de erro. */
+  onSendResult(listener) {
+    this.#sendResultListeners.push(listener);
+  }
+
+  /**
+   * Toda queda, inclusive as que reconectam. `onDisconnect` só avisa quando a
+   * sessão foi perdida DE VEZ — e foi por isso que 19 quedas em 3 dias não
+   * geraram um único alerta.
+   */
+  onConnectionChange(listener) {
+    this.#connectionListeners.push(listener);
+  }
+
+  /**
+   * Sessões que o gateway DEVERIA estar servindo, lidas do disco.
+   *
+   * O /health considerava "nenhuma sessão" um estado saudável, e é justamente
+   * nele que a sessão perdida termina: o cliente sai do mapa e o endpoint volta
+   * a responder 200. Sem uma noção de esperado-vs-conectado, o check verde é
+   * indistinguível do gateway mudo.
+   */
+  expectedSessionIds() {
+    try {
+      const sessionsDir = path.resolve(env.SESSIONS_DIR);
+      if (!fs.existsSync(sessionsDir)) return [];
+
+      return fs
+        .readdirSync(sessionsDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith("md_"))
+        .map((entry) => entry.name.replace("md_", ""))
+        .filter((id) =>
+          fs.existsSync(path.resolve(sessionsDir, `md_${id}`, "creds.json")),
+        );
+    } catch (err) {
+      logger.warn(
+        { err: err?.message },
+        "Falha ao listar sessões esperadas no disco",
+      );
+      return [];
+    }
   }
 
   async #createWithRetry(sessionId, phoneNumber, attempt) {
@@ -324,6 +394,17 @@ export class SessionManager {
     // mais recente, que é o que a tela precisa servir enquanto ninguém escaneia.
     client.on("qr", (qrBase64) => {
       this.#qrCodes.set(sessionId, qrBase64);
+      // Sessão viva pedindo QR = o pareamento caiu. Antes isso só virava uma
+      // entrada no Map e uma linha de log que ninguém lia.
+      for (const listener of this.#qrListeners) {
+        listener(sessionId);
+      }
+    });
+
+    client.on("send-result", (result, sid) => {
+      for (const listener of this.#sendResultListeners) {
+        listener(result, sid);
+      }
     });
 
     // Sem este ouvinte a sessão morre PARA SEMPRE em silêncio: depois de um
@@ -356,9 +437,13 @@ export class SessionManager {
 
     client.on("disconnected", (reason, shouldReconnect) => {
       logger.warn(
-        { sessionId, reason, shouldReconnect },
+        { event: "session_disconnected", sessionId, reason, shouldReconnect },
         "Sessão desconectada",
       );
+
+      for (const listener of this.#connectionListeners) {
+        listener(sessionId, reason, shouldReconnect);
+      }
 
       if (shouldReconnect) {
         this.#scheduleReconnect(sessionId);

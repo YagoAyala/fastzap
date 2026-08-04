@@ -15,6 +15,7 @@ export function buildServer({
   sessionRepository,
   chatRepository,
   messageRepository,
+  alerts = null,
 }) {
   const app = Fastify({
     logger: {
@@ -49,20 +50,43 @@ export function buildServer({
       // falso-verde — o que importa é se a sessão está autenticada.
       const ids = sessionManager.listIds();
       const connected = ids.filter((id) => sessionManager.isConnected(id));
-      const healthy = ids.length === 0 || connected.length > 0;
+
+      // O buraco que sobrava: perda TERMINAL de sessão (loggedOut, forbidden,
+      // max_retries) remove o cliente do mapa, `ids` volta vazio, e a regra
+      // "sem sessão = saudável" devolvia 200 exatamente no estado em que o
+      // gateway está mudo. O disco sabe quantas sessões deveriam existir —
+      // pareado uma vez, esperado para sempre.
+      const expected = sessionManager.expectedSessionIds?.() ?? [];
+      const healthy =
+        connected.length > 0 || (expected.length === 0 && ids.length === 0);
+
+      const message = healthy
+        ? "API operacional"
+        : expected.length > 0 && ids.length === 0
+          ? "Sessão pareada sumiu do gateway — reconexão não está acontecendo"
+          : "Nenhuma sessão autenticada";
 
       return reply.status(healthy ? 200 : 503).send({
         success: healthy,
-        message: healthy ? "API operacional" : "Nenhuma sessão autenticada",
+        message,
         data: {
           uptime: process.uptime(),
           timestamp: new Date().toISOString(),
           activeSessions: ids.length,
           connectedSessions: connected.length,
+          expectedSessions: expected.length,
           sessions: ids.map((id) => ({
             id,
             connected: sessionManager.isConnected(id),
           })),
+          // Estado do produto, não do processo: silêncio de entrada é o único
+          // sintoma de shadowban, e entrega pendente é o único sintoma de
+          // "aceitei mas não entreguei".
+          sessionHealth: sessionManager.healthSnapshot?.() ?? null,
+          outbound:
+            sessionManager.getClient?.(connected[0] ?? ids[0])?.outboundStats?.() ??
+            null,
+          alerts: alerts?.snapshot?.() ?? null,
         },
       });
     },

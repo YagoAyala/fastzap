@@ -84,6 +84,8 @@ A API sobe em `http://localhost:3333` por padrão e a documentação fica em `ht
 | `WEBHOOK_RETRY_DELAY_MS` | não | `1000` | Delay base do retry do webhook (dobra a cada falha) |
 | `TELEGRAM_TOKEN` | não | — | Token do bot do Telegram (vazio = sem alertas) |
 | `TELEGRAM_CHAT_ID` | não | — | Chat/grupo que recebe os alertas |
+| `DELIVERY_ACK_TIMEOUT_MS` | não | `900000` | Prazo até declarar `undelivered` uma mensagem aceita sem recibo de entrega |
+| `DOCKER_LOG_DRIVER` | não | `json-file` | Driver de log do container. Use `gcplogs` em produção para os logs saírem da VM |
 
 ## Autenticação
 
@@ -132,7 +134,17 @@ curl -X POST "http://localhost:3333/send-text?id=minha-sessao" \
 ### Health
 | Método | Rota | Descrição |
 |---|---|---|
-| `GET` | `/health` | Status da API e sessões ativas (público) |
+| `GET` | `/health` | Estado da **sessão WhatsApp**, não do processo (público) |
+
+`200` só quando existe pelo menos uma sessão autenticada — ou quando o gateway
+ainda não tem número pareado (instalação nova). `503` cobre os dois modos de
+falha: sessão presente mas desconectada, e sessão pareada que sumiu do gateway
+(perda terminal remove o cliente da memória, e é justamente aí que o check
+antigo voltava a responder `200`).
+
+O corpo carrega `sessionHealth` (silêncio de entrada — sintoma de shadowban),
+`outbound` (fila, orçamento e entregas pendentes) e `alerts` (quedas, falhas de
+envio e entregas sem recibo na última hora).
 
 ### Sessões (`/sessions`)
 | Método | Rota | Descrição |
@@ -181,6 +193,27 @@ curl -X POST "http://localhost:3333/send-text?id=minha-sessao" \
 
 Se `WEBHOOK_URL` estiver definida, cada mensagem recebida é encaminhada por `POST` para essa URL, com retry e backoff exponencial controlados por `WEBHOOK_MAX_RETRIES` e `WEBHOOK_RETRY_DELAY_MS`.
 
+### Dois envelopes
+
+| `type` | Quando | Campos próprios |
+|---|---|---|
+| `ReceivedCallback` | Mensagem de usuário chegou | `phone`, `participantPhone`, `quoted`, conteúdo por tipo |
+| `MessageStatusCallback` | O WhatsApp disse algo sobre uma mensagem **NOSSA** | `messageId`, `status`, `reason` |
+
+`status` vale `pending`, `sent`, `delivered`, `read`, `played`, `failed` ou
+`undelivered`.
+
+- `failed` é veredito do servidor: a stanza foi recusada.
+- `undelivered` é inferência do gateway: a mensagem foi aceita, ganhou
+  `messageId` e nenhum recibo chegou em `DELIVERY_ACK_TIMEOUT_MS`. Vem sempre com
+  `reason: "no_delivery_ack"`. Esse desfecho **não gera evento no Baileys** — sem
+  ele, "entregou" e "sumiu no caminho" são indistinguíveis para quem consome.
+
+Recibo de mensagem que **não** é nossa (o `read` que o próprio gateway gera ao
+marcar o inbound como lido) nunca é despachado: como o consumidor grava
+`MessageStatusCallback` como saída, isso produziria linha de saída carregando o
+wamid de entrada.
+
 ## Docker
 
 ```bash
@@ -188,6 +221,26 @@ docker compose up -d --build
 ```
 
 O `docker-compose.yml` já configura volume persistente para as sessões, healthcheck e roda as migrations no start. Lembre-se de fornecer um `.env` com as variáveis (especialmente `DATABASE_URL` apontando para um PostgreSQL acessível pelo container).
+
+### Logs fora da VM
+
+Com o driver padrão (`json-file`) todo log morre dentro da máquina e só existe
+via `docker logs` por SSH. Em produção (VM no GCP) use o driver `gcplogs`, que
+manda direto para o Cloud Logging:
+
+```bash
+# via compose
+DOCKER_LOG_DRIVER=gcplogs docker compose up -d
+
+# via docker run
+docker run -d --name fastzap --restart unless-stopped \
+  --log-driver=gcplogs --log-opt labels=app \
+  --label app=fastzap \
+  -p 3333:3333 -v /opt/fastzap/sessions:/app/sessions \
+  --env-file /opt/fastzap/.env <imagem>
+```
+
+A VM precisa do escopo `logging-write` (padrão em instâncias do Compute Engine).
 
 ## Stack
 

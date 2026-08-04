@@ -13,6 +13,7 @@ import pino from 'pino'
 import { env } from '../../config/env.js'
 import { OutboundQueue } from './OutboundQueue.js'
 import { SendBudget } from './SendBudget.js'
+import { DeliveryTracker } from './DeliveryTracker.js'
 
 // proto.WebMessageInfo.Status — o número cru não diz nada pra quem consome.
 // 'error' é o rótulo do proto, mas quem consome conta 'failed' — a sentinela de
@@ -38,14 +39,37 @@ export class BaileysClient extends EventEmitter {
   #pairingCodeRequested = false
   #budget
   #outbound
+  #delivery
 
-  constructor(sessionId) {
+  constructor(sessionId, { delivery = null } = {}) {
     super()
     this.#sessionId = sessionId
     this.#sessionsDir = path.resolve(env.SESSIONS_DIR)
     this.#budget = new SendBudget({ sessionId })
     this.#budget.load().catch(() => {})
     this.#outbound = new OutboundQueue({ budget: this.#budget })
+    this.#delivery =
+      delivery ??
+      new DeliveryTracker({
+        ackTimeoutMs: env.DELIVERY_ACK_TIMEOUT_MS,
+        onUndelivered: ({ messageId, jid, ageMs }) => {
+          // Mesmo envelope do recibo normal: quem consome não deveria precisar
+          // de um segundo caminho de código pra saber que a mensagem morreu.
+          this.emit(
+            'message-status',
+            {
+              messageId,
+              jid,
+              fromMe: true,
+              status: 'undelivered',
+              reason: 'no_delivery_ack',
+              ageMs,
+            },
+            this.#sessionId
+          )
+        },
+      })
+    this.#delivery.start()
   }
 
   get sessionId() {
@@ -95,6 +119,7 @@ export class BaileysClient extends EventEmitter {
   async close() {
     this.#isShuttingDown = true
     this.#pendingSetup = false
+    this.#delivery.stop()
 
     if (this.#socket) {
       this.#socket.end()
@@ -105,6 +130,7 @@ export class BaileysClient extends EventEmitter {
   async disconnect() {
     this.#isShuttingDown = true
     this.#pendingSetup = false
+    this.#delivery.stop()
 
     if (this.#socket) {
       await this.#socket.logout().catch(() => {})
@@ -122,9 +148,10 @@ export class BaileysClient extends EventEmitter {
     // não espaçava nada sob concorrência (N requests dormiam em paralelo) e
     // ainda somava ~2,5s de latência em TODA resposta a usuário. A fila espaça
     // de verdade e devolve a latência do reativo.
-    return this.#outbound.enqueue(
+    return this.#enqueue(
       () => this.#doSend(jid, content, options),
-      { lane: options.lane ?? 'proactive', jid }
+      { lane: options.lane ?? 'proactive', jid },
+      { trackable: DeliveryTracker.isTrackable(jid, content), jid }
     )
   }
 
@@ -133,6 +160,33 @@ export class BaileysClient extends EventEmitter {
     // `quoted` é o que faz o WhatsApp renderizar a citação da mensagem original.
     // O Baileys aceita a mensagem inteira ou um stub com key + message.
     return this.#socket.sendMessage(jid, content, options.quoted ? { quoted: options.quoted } : undefined)
+  }
+
+  /**
+   * Único portão de saída — TODO envio passa por aqui.
+   *
+   * Existe porque falha de envio e entrega não confirmada precisavam ser
+   * contadas em algum lugar, e espalhar essa contagem por `sendMessage`,
+   * `sendRawMessage` e `enqueueSend` garantiria que o próximo caminho de envio
+   * nascesse sem ela — que é exatamente como o gateway ficou sem observabilidade
+   * na primeira vez.
+   */
+  async #enqueue(task, queueOpts, { trackable = false, jid = '' } = {}) {
+    try {
+      const result = await this.#outbound.enqueue(task, queueOpts)
+      this.emit('send-result', { ok: true, jid }, this.#sessionId)
+      if (trackable) {
+        this.#delivery.track(result?.key?.id ?? null, jid)
+      }
+      return result
+    } catch (error) {
+      this.emit(
+        'send-result',
+        { ok: false, jid, error: error?.message ?? 'erro' },
+        this.#sessionId
+      )
+      throw error
+    }
   }
 
   /**
@@ -154,26 +208,37 @@ export class BaileysClient extends EventEmitter {
       throw new Error(`Socket da sessão '${this.#sessionId}' não está disponível`)
     }
 
-    return this.#outbound.enqueue(async () => {
-      const generated = generateWAMessageFromContent(jid, message, {
-        userJid: this.#socket.user?.id,
-      })
+    return this.#enqueue(
+      async () => {
+        const generated = generateWAMessageFromContent(jid, message, {
+          userJid: this.#socket.user?.id,
+        })
 
-      await this.#socket.relayMessage(jid, generated.message, {
-        messageId: generated.key.id,
-      })
+        await this.#socket.relayMessage(jid, generated.message, {
+          messageId: generated.key.id,
+        })
 
-      return generated
-    }, { lane: 'proactive', jid })
+        return generated
+      },
+      { lane: 'proactive', jid },
+      { trackable: DeliveryTracker.isTrackable(jid, null), jid }
+    )
   }
 
   /** Expõe a fila pra quem precisa enfileirar sem passar por sendMessage. */
-  enqueueSend(task, opts) {
-    return this.#outbound.enqueue(task, opts)
+  enqueueSend(task, opts = {}) {
+    return this.#enqueue(task, opts, {
+      trackable: DeliveryTracker.isTrackable(opts.jid, null),
+      jid: opts.jid ?? '',
+    })
   }
 
   outboundStats() {
-    return { ...this.#outbound.stats(), budget: this.#budget.snapshot() }
+    return {
+      ...this.#outbound.stats(),
+      budget: this.#budget.snapshot(),
+      delivery: this.#delivery.stats(),
+    }
   }
 
   /**
@@ -310,11 +375,29 @@ export class BaileysClient extends EventEmitter {
     this.#socket.ev.on('messages.update', (updates) => {
       for (const { key, update } of updates) {
         if (update?.status === undefined || update?.status === null) continue
+
+        const status = STATUS_LABELS[update.status] ?? String(update.status)
+        const fromMe = key?.fromMe ?? false
+
+        // Liquida ANTES do filtro: um recibo de mensagem nossa encerra a
+        // pendência mesmo que o consumidor não vá receber o evento.
+        if (fromMe) {
+          this.#delivery.settle(key?.id ?? null, status)
+        }
+
+        // O `messages.update` também carrega recibo de mensagem que NÃO é nossa
+        // — a mais comum sendo o `read` que o próprio gateway gera ao marcar o
+        // inbound como lido. Repassar isso como recibo de saída é mentira de
+        // duas pontas: o id é o da mensagem que RECEBEMOS, e quem consome grava
+        // como se fosse entrega de mensagem nossa (17 linhas assim no banco da
+        // Focca em 4 dias, todas `direction='outgoing'` com wamid de entrada).
+        if (!fromMe) continue
+
         this.emit('message-status', {
           messageId: key?.id ?? null,
           jid: key?.remoteJid ?? null,
-          fromMe: key?.fromMe ?? false,
-          status: STATUS_LABELS[update.status] ?? String(update.status),
+          fromMe: true,
+          status,
         }, this.#sessionId)
       }
     })

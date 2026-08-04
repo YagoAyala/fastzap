@@ -48,13 +48,24 @@ export class WebhookDispatcher {
     // MessageStatusCallback é o WhatsApp dizendo o que aconteceu com o que
     // mandamos. Sem isso, "entregou" e "sumiu" são indistinguíveis.
     sessionManager.onMessageStatus?.((status, sessionId) => {
+      // Recibo de mensagem que não é nossa NÃO é recibo de saída. Quem consome
+      // grava MessageStatusCallback como `direction='outgoing'`, então deixar
+      // `fromMe:false` passar produz linha de saída com o wamid de ENTRADA — o
+      // par de logs que a auditoria de 03/08/2026 leu como "o outbound é logado
+      // com o id do inbound". Barrado aqui também, e não só na origem, porque
+      // este é o ponto onde o contrato com o consumidor é escrito.
+      if (status?.fromMe !== true) return;
+
       this.#sendWithRetry({
         instanceId: sessionId,
         type: "MessageStatusCallback",
         phone: stripJidSuffixes(status.jid),
         messageId: status.messageId,
         status: status.status,
-        fromMe: status.fromMe,
+        fromMe: true,
+        // Só existe em status inferido por silêncio (`undelivered`): diz por que
+        // o gateway declarou a entrega morta sem o servidor ter dito nada.
+        ...(status.reason && { reason: status.reason }),
         momment: Date.now(),
       }).catch((err) =>
         logger.error({ err, sessionId }, "Erro no dispatch de status"),
