@@ -1,7 +1,10 @@
 import axios from "axios";
+import https from "node:https";
+import http from "node:http";
 import pino from "pino";
 import { env } from "../../config/env.js";
 import { MediaDownloader } from "../whatsapp/MediaDownloader.js";
+import { WebhookOutbox } from "./WebhookOutbox.js";
 
 const logger = pino({ level: "info" }).child({ module: "WebhookDispatcher" });
 
@@ -21,13 +24,32 @@ export class WebhookDispatcher {
   #mediaDownloader;
   #enabled;
   #sessionManager;
+  #outbox;
+  #agents;
 
-  constructor(sessionManager) {
+  constructor(sessionManager, { store = null, alerts = null } = {}) {
     this.#webhookUrl = env.WEBHOOK_URL;
     this.#maxRetries = env.WEBHOOK_MAX_RETRIES;
     this.#retryDelayMs = env.WEBHOOK_RETRY_DELAY_MS;
     this.#mediaDownloader = new MediaDownloader();
     this.#enabled = Boolean(this.#webhookUrl);
+
+    const socketCeiling = env.WEBHOOK_CONCURRENCY + 2;
+    this.#agents = {
+      https: new https.Agent({ keepAlive: true, maxSockets: socketCeiling }),
+      http: new http.Agent({ keepAlive: true, maxSockets: socketCeiling }),
+    };
+
+    this.#outbox = new WebhookOutbox({
+      transport: (payload) => this.#post(payload),
+      store,
+      alerts,
+      logger,
+      concurrency: env.WEBHOOK_CONCURRENCY,
+      maxAttempts: this.#maxRetries,
+      retryDelayMs: this.#retryDelayMs,
+      receiptQueueCap: env.WEBHOOK_RECEIPT_QUEUE_CAP,
+    });
     this.#sessionManager = sessionManager;
 
     if (!this.#enabled) {
@@ -56,7 +78,7 @@ export class WebhookDispatcher {
       // este é o ponto onde o contrato com o consumidor é escrito.
       if (status?.fromMe !== true) return;
 
-      this.#sendWithRetry({
+      this.#outbox.enqueue({
         instanceId: sessionId,
         type: "MessageStatusCallback",
         phone: stripJidSuffixes(status.jid),
@@ -67,17 +89,19 @@ export class WebhookDispatcher {
         // o gateway declarou a entrega morta sem o servidor ter dito nada.
         ...(status.reason && { reason: status.reason }),
         momment: Date.now(),
-      }).catch((err) =>
-        logger.error({ err, sessionId }, "Erro no dispatch de status"),
-      );
+      });
     });
 
     logger.info({ url: this.#webhookUrl }, "WebhookDispatcher ativo");
   }
 
+  get outbox() {
+    return this.#outbox;
+  }
+
   async #dispatch(message, sessionId) {
     const payload = await this.#buildPayload(message, sessionId);
-    await this.#sendWithRetry(payload);
+    this.#outbox.enqueue(payload);
   }
 
   async #buildPayload(msg, sessionId) {
@@ -487,42 +511,17 @@ export class WebhookDispatcher {
     }
   }
 
-  async #sendWithRetry(payload) {
-    let lastError;
-
-    for (let attempt = 1; attempt <= this.#maxRetries; attempt++) {
-      try {
-        await axios.post(this.#webhookUrl, payload, {
-          headers: {
-            "Content-Type": "application/json",
-            // Sem isto o destino não tem como distinguir o gateway de qualquer
-            // um que descubra a URL: o webhook não é assinado como o da Meta.
-            // Opcional — quem não configurar segue como antes.
-            ...(env.WEBHOOK_HEADER_SECRET && {
-              "x-gateway-secret": env.WEBHOOK_HEADER_SECRET,
-            }),
-          },
-          timeout: 10_000,
-        });
-
-        return; // sucesso
-      } catch (err) {
-        lastError = err;
-
-        if (attempt < this.#maxRetries) {
-          const delay = this.#retryDelayMs * Math.pow(2, attempt - 1);
-          logger.warn(
-            { attempt, maxRetries: this.#maxRetries, delayMs: delay },
-            "Falha no webhook, tentando novamente",
-          );
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
-    }
-
-    logger.error(
-      { err: lastError, attempts: this.#maxRetries },
-      "Webhook falhou após todas as tentativas",
-    );
+  async #post(payload) {
+    await axios.post(this.#webhookUrl, payload, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(env.WEBHOOK_HEADER_SECRET && {
+          "x-gateway-secret": env.WEBHOOK_HEADER_SECRET,
+        }),
+      },
+      httpsAgent: this.#agents.https,
+      httpAgent: this.#agents.http,
+      timeout: env.WEBHOOK_TIMEOUT_MS,
+    });
   }
 }

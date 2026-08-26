@@ -32,6 +32,7 @@ export class GatewayAlerts {
   #sendFailures = [];
   #sendTotal = [];
   #undelivered = [];
+  #webhookDeferrals = [];
 
   constructor({
     notifier = null,
@@ -41,6 +42,7 @@ export class GatewayAlerts {
     sendFailureThreshold = 5,
     sendFailureRate = 0.2,
     undeliveredThreshold = 5,
+    webhookDeferralThreshold = 3,
     now = () => Date.now(),
   } = {}) {
     this.#notifier = notifier;
@@ -50,6 +52,7 @@ export class GatewayAlerts {
     this.sendFailureThreshold = sendFailureThreshold;
     this.sendFailureRate = sendFailureRate;
     this.undeliveredThreshold = undeliveredThreshold;
+    this.webhookDeferralThreshold = webhookDeferralThreshold;
     this.now = now;
   }
 
@@ -183,6 +186,78 @@ export class GatewayAlerts {
     );
   }
 
+  webhookRetryExhausted({ phone, messageId, attempts, error, retryInMs }) {
+    logger.error(
+      {
+        event: "webhook_message_deferred",
+        phone,
+        messageId,
+        attempts,
+        error,
+      },
+      "Mensagem de usuário não entregue — adiada para o dreno",
+    );
+
+    this.#webhookDeferrals = this.#prune(this.#webhookDeferrals);
+    this.#webhookDeferrals.push(this.now());
+
+    if (this.#webhookDeferrals.length < this.webhookDeferralThreshold) return;
+
+    this.#fire(
+      "webhook_deferrals",
+      {
+        event: "webhook_deferral_storm",
+        count: this.#webhookDeferrals.length,
+      },
+      `⚠️ *Mensagens de usuário não estão chegando na Focca*\n\n` +
+        `*Adiadas na última hora:* ${this.#webhookDeferrals.length}\n` +
+        `*Último erro:* ${error ?? "desconhecido"}\n` +
+        `*Próxima tentativa em:* ${Math.round((retryInMs ?? 0) / 1000)}s\n\n` +
+        `O payload está salvo no outbox e volta sozinho. Se isso não parar, ` +
+        `o problema é a Focca ou a rede da VM.`,
+    );
+  }
+
+  webhookDead({ phone, messageId, attempts, error, durable }) {
+    this.#fire(
+      `webhook_dead:${messageId ?? phone}`,
+      { event: "webhook_message_dead", phone, messageId, attempts, durable },
+      `🚨 *Mensagem de usuário perdida*\n\n` +
+        `*De:* \`${phone ?? "?"}\`\n` +
+        `*Id:* \`${messageId ?? "?"}\`\n` +
+        `*Tentativas:* ${attempts}\n` +
+        `*Erro:* ${error ?? "desconhecido"}\n\n` +
+        (durable
+          ? `A cópia está em \`webhook_outbox\` com status \`dead\` — dá para reentregar na mão.`
+          : `*Sem cópia durável.* O conteúdo só existe no log do container.`),
+      { critical: true },
+    );
+  }
+
+  webhookBacklog({ queued, messages, receipts, inFlight }) {
+    this.#fire(
+      "webhook_backlog",
+      { event: "webhook_backlog", queued, messages, receipts, inFlight },
+      `⚠️ *Fila do webhook acumulando*\n\n` +
+        `*Na fila:* ${queued} (${messages} mensagens, ${receipts} recibos)\n` +
+        `*Em voo:* ${inFlight}\n\n` +
+        `Rajada de recibo é o padrão conhecido: mensagem de usuário tem ` +
+        `prioridade, mas fila longa ainda atrasa resposta.`,
+    );
+  }
+
+  webhookShed({ reason, dropped, cap, shedTotal }) {
+    this.#fire(
+      `webhook_shed:${reason}`,
+      { event: "webhook_receipts_shed", reason, dropped, cap, shedTotal },
+      `⚠️ *Recibos de entrega descartados*\n\n` +
+        `*Motivo:* ${reason}\n` +
+        `*Descartados na janela:* ${shedTotal}\n\n` +
+        `Recibo perdido cega a sentinela de entrega — ela conta ` +
+        `\`status='failed'\` e lê verde por ausência de dado.`,
+    );
+  }
+
   #prune(list) {
     const cutoff = this.now() - this.windowMs;
     return list.filter((ts) => ts > cutoff);
@@ -226,6 +301,7 @@ export class GatewayAlerts {
       sendFailuresInWindow: this.#prune(this.#sendFailures).length,
       sendsInWindow: this.#prune(this.#sendTotal).length,
       undeliveredInWindow: this.#prune(this.#undelivered).length,
+      webhookDeferralsInWindow: this.#prune(this.#webhookDeferrals).length,
     };
   }
 }

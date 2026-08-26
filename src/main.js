@@ -9,6 +9,7 @@ import { GatewayAlerts } from "./infrastructure/notifications/GatewayAlerts.js";
 import { SessionRepository } from "./infrastructure/database/repositories/SessionRepository.js";
 import { ChatRepository } from "./infrastructure/database/repositories/ChatRepository.js";
 import { MessageRepository } from "./infrastructure/database/repositories/MessageRepository.js";
+import { WebhookOutboxRepository } from "./infrastructure/database/repositories/WebhookOutboxRepository.js";
 import { closeDatabase } from "./infrastructure/database/connection.js";
 
 import { buildServer, startServer } from "./infrastructure/http/server.js";
@@ -77,7 +78,34 @@ async function bootstrap() {
       );
   });
 
-  new WebhookDispatcher(sessionManager);
+  const outboxStore = env.WEBHOOK_OUTBOX_ENABLED
+    ? new WebhookOutboxRepository()
+    : null;
+
+  if (!outboxStore) {
+    logger.error(
+      { event: "webhook_outbox_disabled" },
+      "WEBHOOK_OUTBOX_ENABLED=0 — mensagem de usuário que esgotar as tentativas será PERDIDA",
+    );
+  }
+
+  const dispatcher = new WebhookDispatcher(sessionManager, {
+    store: outboxStore,
+    alerts,
+  });
+
+  const recovered = await dispatcher.outbox.recover();
+  logger.info(
+    { event: "webhook_outbox_boot", recovered, durable: dispatcher.outbox.durable },
+    "Outbox do webhook pronto",
+  );
+
+  const outboxTimer = setInterval(() => {
+    dispatcher.outbox
+      .tick()
+      .catch((err) => logger.error({ err }, "Erro no dreno do outbox"));
+  }, env.WEBHOOK_OUTBOX_TICK_MS);
+  outboxTimer.unref();
 
   await sessionManager.restoreAll();
 
@@ -107,6 +135,7 @@ async function bootstrap() {
     chatRepository,
     messageRepository,
     alerts,
+    outbox: dispatcher.outbox,
   });
 
   await startServer(app);
@@ -121,6 +150,8 @@ async function bootstrap() {
 
     try {
       await app.close();
+      clearInterval(outboxTimer);
+      await dispatcher.outbox.stop();
       // A baseline do vigia é write-behind: sem este flush, um SIGTERM entre
       // duas janelas de escrita perderia justamente as observações mais
       // recentes — as que o próximo boot precisa pra não ficar cego.

@@ -36,6 +36,14 @@ const schema = z.object({
     .optional(),
   WEBHOOK_MAX_RETRIES: z.coerce.number().default(3),
   WEBHOOK_RETRY_DELAY_MS: z.coerce.number().default(1000),
+  WEBHOOK_TIMEOUT_MS: z.coerce.number().default(10_000),
+  WEBHOOK_CONCURRENCY: z.coerce.number().min(1).max(64).default(4),
+  WEBHOOK_RECEIPT_QUEUE_CAP: z.coerce.number().default(5000),
+  WEBHOOK_OUTBOX_ENABLED: z
+    .enum(["0", "1", "false", "true"])
+    .default("1")
+    .transform((v) => v === "1" || v === "true"),
+  WEBHOOK_OUTBOX_TICK_MS: z.coerce.number().default(60_000),
 
   TELEGRAM_TOKEN: z
     .string()

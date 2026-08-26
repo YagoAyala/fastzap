@@ -16,6 +16,7 @@ export function buildServer({
   chatRepository,
   messageRepository,
   alerts = null,
+  outbox = null,
 }) {
   const app = Fastify({
     logger: {
@@ -87,6 +88,7 @@ export function buildServer({
             sessionManager.getClient?.(connected[0] ?? ids[0])?.outboundStats?.() ??
             null,
           alerts: alerts?.snapshot?.() ?? null,
+          webhookOutbox: outbox?.snapshot?.() ?? null,
         },
       });
     },
